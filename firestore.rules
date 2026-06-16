@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default Deny Rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Auth and Metadata Helper Checks
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Users Collection rules
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // On creation, users can initialize their own records
+      allow create: if isSignedIn() && userId == request.auth.uid;
+      // Users can update their own profile, but only admins can change roles or manually edit credits
+      allow update: if isOwner(userId) && (
+        !incoming().diff(existing()).affectedKeys().hasAny(['role', 'credits'])
+      ) || isAdmin();
+    }
+
+    // User Subcollections - History & Subscriptions (Nested under users/{userId})
+    match /users/{userId}/history/{historyId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update, delete: if isAdmin();
+    }
+
+    match /users/{userId}/subscriptions/{subId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId}/cloned_voices/{voiceId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update, delete: if isOwner(userId);
+    }
+
+    // Payment Requests (Global Collection)
+    match /payment_requests/{requestId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // Users can upload pending receipts
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      // Only admins can approve, reject, or edit payment requests
+      allow update, delete: if isAdmin();
+    }
+  }
+}
