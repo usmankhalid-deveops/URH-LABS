@@ -79,15 +79,17 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
   const handleAutoLogin = async (role: "user" | "admin") => {
     setIsSubmitting(true);
     try {
-      const emailTarget = role === "admin" ? "usmankhalid619131ics@gmail.com" : "john@example.com";
-      const profile = await FirebaseIntegration.login(emailTarget, "password123");
+      const emailTarget = role === "admin" ? "usmankhalid619131@gmail.com" : "john@example.com";
+      const passwordTarget = role === "admin" ? "619131" : "password123";
+      const profile = await FirebaseIntegration.login(emailTarget, passwordTarget);
       onAuthSuccess(profile);
     } catch (err) {
       // If profile missing, register automatically
       try {
         const dummyName = role === "admin" ? "Usman Khalid (Admin)" : "Mock Tester";
-        const dummyMail = role === "admin" ? "usmankhalid619131ics@gmail.com" : "john@example.com";
-        const profile = await FirebaseIntegration.register(dummyName, dummyMail, "password123", role === "admin");
+        const dummyMail = role === "admin" ? "usmankhalid619131@gmail.com" : "john@example.com";
+        const passwordTarget = role === "admin" ? "619131" : "password123";
+        const profile = await FirebaseIntegration.register(dummyName, dummyMail, passwordTarget, role === "admin");
         onAuthSuccess(profile);
       } catch (nestedErr: any) {
         alert(nestedErr.message || "Failed sandbox auto registration.");
@@ -153,7 +155,7 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
 
             <div className="space-y-3">
               <h1 className="text-3xl font-black text-white tracking-tight">
-                URH <span className="text-[#00f0ff]">Labs</span>
+                URH <span className="text-[#00f0ff]">LABS</span>
               </h1>
               <p className="text-gray-400 text-xs leading-relaxed">
                 Unlock studio-grade Text to Speech, vocal clone mapping, neural translation, lip-sync dubbing, and interactive podcast compositions.
@@ -248,12 +250,20 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
               
               {/* Form title */}
               <div>
-                <h3 className="text-xl font-black text-white tracking-tight">
-                  {activeForm === "login" ? "Welcome back to URH Labs Node" : "Instantiate custom voice account"}
-                </h3>
-                <p className="text-gray-400 text-xs mt-1 font-sans">
-                  {activeForm === "login" ? "Sign in using credentials or activate quick sandbox access." : "Initialize a brand developer node in seconds."}
-                </p>
+                {activeForm === "signup" ? (
+                  <h3 className="text-3xl font-black text-white tracking-tight mb-1">
+                    Account
+                  </h3>
+                ) : (
+                  <>
+                    <h3 className="text-xl font-black text-white tracking-tight">
+                      {activeForm === "login" ? "Welcome back to URH LABS Node" : "Instantiate custom voice account"}
+                    </h3>
+                    <p className="text-gray-400 text-xs mt-1 font-sans">
+                      {activeForm === "login" ? "Sign in using credentials or activate quick sandbox access." : "Initialize a brand developer node in seconds."}
+                    </p>
+                  </>
+                )}
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4 font-mono text-xs">
@@ -261,14 +271,14 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                 {/* Name Input ONLY on sign up */}
                 {activeForm === "signup" && (
                   <div className="space-y-1">
-                    <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">Linguistic user title</label>
+                    <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">User</label>
                     <div className="relative">
                       <User className="absolute left-3.5 top-3.5 w-4 h-4 text-gray-500" />
                       <input 
                         type="text" 
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g. Usman Khalid"
+                        placeholder="Your Name"
                         className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white font-sans"
                         required 
                       />
@@ -278,14 +288,14 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
 
                 {/* Email Input */}
                 <div className="space-y-1">
-                  <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">Network Email Node</label>
+                  <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">User Email</label>
                   <div className="relative">
                     <Mail className="absolute left-3.5 top-3.5 w-4 h-4 text-gray-500" />
                     <input 
                       type="email" 
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="e.g. usmankhalid619131ics@gmail.com"
+                      placeholder="e.g. user@example.com"
                       className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white font-mono"
                       required 
                     />
@@ -295,7 +305,7 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                 {/* Password Input */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">Access Token password</label>
+                    <label className="text-gray-500 uppercase font-bold text-[10px] tracking-wider">Password</label>
                     {activeForm === "login" && (
                       <button 
                         type="button"
@@ -333,7 +343,7 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                             : "bg-white/5 border-white/5 hover:border-white/10 text-gray-400"
                         }`}
                       >
-                        Standard Client Node
+                        Client
                       </button>
                       <button
                         type="button"
@@ -362,7 +372,7 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                     </>
                   ) : (
                     <>
-                      <span>{activeForm === "login" ? "Verify Key authorization" : "Establish virtual node"}</span>
+                      <span>{activeForm === "login" ? "Sign in" : "Sign up"}</span>
                       <ArrowRight className="w-4 h-4 text-black" />
                     </>
                   )}
@@ -387,14 +397,14 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                     <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.81-2.47-.81-5.16 0-7.63z" fill="#FBBC05" />
                     <path d="M12 5.38c1.62-.03 3.17.58 4.32 1.69l3.23-3.23C17.56 1.83 14.88 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.52z" fill="#EA4335" />
                   </svg>
-                  <span>Google SSO Sign-In</span>
+                  <span>Google</span>
                 </button>
               </form>
 
               {/* Form switcher options */}
               <div className="text-center font-sans text-xs text-gray-400 pt-4 border-t border-white/5 flex items-center justify-center gap-1.5">
                 <span>
-                  {activeForm === "login" ? "New to URH Labs Platform?" : "Returning developer credentials?"}
+                  {activeForm === "login" ? "New to URH LABS Platform?" : "Returning developer credentials?"}
                 </span>
                 <button
                   onClick={() => setActiveForm(activeForm === "login" ? "signup" : "login")}

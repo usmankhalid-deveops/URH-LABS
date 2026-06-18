@@ -24,6 +24,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState(true);
   const [showAuthPage, setShowAuthPage] = useState(false);
   const [initialForm, setInitialForm] = useState<"login" | "signup">("login");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Synchronize state from database or storage triggers
   useEffect(() => {
@@ -63,6 +64,13 @@ export default function App() {
   const handleToggleRoleDev = async () => {
     if (!user) return;
     const nextRole = user.role === "admin" ? "user" : "admin";
+    
+    // Strict admin boundary checking
+    if (nextRole === "admin" && user.email.toLowerCase() !== "usmankhalid619131@gmail.com") {
+      alert("Access Denied: Administrative role is uniquely locked to the designated usmankhalid619131@gmail.com master account.");
+      return;
+    }
+
     const nextPlan = nextRole === "admin" ? "11M Characters" : "Free Plan";
     const nextCredits = nextRole === "admin" ? 10000000 : 50000;
 
@@ -120,7 +128,7 @@ export default function App() {
           <div className="w-full h-full bg-black rounded-xl" />
         </div>
         <span className="animate-pulse tracking-widest text-[#00ff66] uppercase font-bold">
-          URH Labs Synthetic Node Booting...
+          URH LABS Synthetic Node Booting...
         </span>
       </div>
     );
@@ -150,7 +158,7 @@ export default function App() {
   const isReal = FirebaseIntegration.isRealFirebase();
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex font-sans">
+    <div className="min-h-screen bg-black text-gray-100 flex font-sans overflow-x-hidden">
       
       {/* 1. Left Fixed Sidebar */}
       <Sidebar 
@@ -159,16 +167,19 @@ export default function App() {
         user={user} 
         onLogout={handleLogout}
         onToggleRole={handleToggleRoleDev}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       {/* 2. Main content segment wrapper */}
-      <div className="flex-1 min-h-screen flex flex-col pl-68">
+      <div className="flex-1 min-h-screen flex flex-col pl-0 lg:pl-68 transition-all duration-300">
         
         {/* 3. Top telemetry bar */}
         <Navbar 
           user={user} 
           onContactShortcut={() => setActivePage("contact" as any)}
           isRealFirebase={isReal}
+          onOpenSidebar={() => setSidebarOpen(true)}
         />
 
         {/* 4. Active viewport dynamic routing */}
@@ -232,7 +243,7 @@ export default function App() {
 
         {/* Status indicator footer bar */}
         <footer className="border-t border-white/5 py-6 px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-[10px] font-mono text-gray-600 bg-[#030304]">
-          <span>© 2026 URH Labs Neural Voice Platform All Rights Reserved.</span>
+          <span>© 2026 URH LABS Neural Voice Platform All Rights Reserved.</span>
           <div className="flex items-center gap-4">
             <span className="hover:text-gray-400 cursor-pointer">Terms of System Use</span>
             <span>•</span>

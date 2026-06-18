@@ -114,14 +114,59 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
     }
   ];
 
-  // Image upload to Base64 extractor
+  // Image upload with instant client-side downscaling & JPEG compression
+  // Enforces a strict 2MB maximum limit as requested by the user.
   const handleScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      
+      // Strict 2MB check as requested (2 * 1024 * 1024 bytes)
+      const MAX_FILE_SIZE = 2 * 1024 * 1024;
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`File size exceeds the 2MB limit. Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB. Please upload a screenshot up to 2MB.`);
+        // Reset input element value to allow re-selecting
+        e.target.value = "";
+        return;
+      }
+
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setScreenshotBase64(reader.result as string);
+      
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          const MAX_WIDTH = 1000;
+          const MAX_HEIGHT = 1000;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedBase64 = canvas.toDataURL("image/jpeg", 0.7);
+            setScreenshotBase64(compressedBase64);
+          } else {
+            setScreenshotBase64(event.target?.result as string);
+          }
+        };
+        img.src = event.target?.result as string;
       };
+      
       reader.readAsDataURL(file);
     }
   };
@@ -156,6 +201,26 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
     }
   };
 
+  const handleAcceptOffer = async (planName: string) => {
+    if (!user) return;
+    
+    // Determine the credits corresponding to this plan
+    let credits = 50000;
+    if (planName === "1M Characters" || planName.includes("1M")) credits = 1000000;
+    else if (planName === "3M Characters" || planName.includes("3M")) credits = 3000000;
+    else if (planName === "5M Characters" || planName.includes("5M")) credits = 5000000;
+    else if (planName === "11M Characters" || planName.includes("11M")) credits = 11000000;
+
+    try {
+      await FirebaseIntegration.acceptPlanOffer(user.uid, planName, credits);
+      alert(`Congratulations! The promotional plan "${planName}" has been successfully activated on your account.`);
+      onRefreshUser();
+    } catch (err) {
+      console.error(err);
+      alert("Billing connection error: Unable to activate promotional offer.");
+    }
+  };
+
   const getPKRPriceString = (p: SaaSPlan, yearly: boolean) => {
     if (p.monthlyPrice === 0) return "Free";
     const price = yearly ? p.yearlyPrice : p.monthlyPrice;
@@ -164,6 +229,48 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
 
   return (
     <div className="space-y-12">
+
+      {/* Real-time Admin promotional plan offers */}
+      {user && user.offeredPlans && user.offeredPlans.length > 0 && (
+        <div className="p-6 rounded-2xl bg-gradient-to-r from-amber-950/20 to-indigo-950/20 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.05)] space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <span className="text-[10px] uppercase tracking-widest text-amber-400 font-extrabold font-mono flex items-center gap-1.5">
+                <Coins className="w-3.5 h-3.5 text-amber-400" /> Exclusive Promotional Offer Available
+              </span>
+              <h3 className="text-lg font-black text-white">Unlock Admin Recommended Plan</h3>
+              <p className="text-gray-400 text-xs">
+                The platform administration has pre-approved your profile for an expedited plan promotion. Claim yours below.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {user.offeredPlans.map((oPlan) => {
+              let planCreditsStr = "50,000 Chars";
+              if (oPlan.includes("1M")) planCreditsStr = "1,000,000 Chars";
+              else if (oPlan.includes("3M")) planCreditsStr = "3,000,000 Chars";
+              else if (oPlan.includes("5M")) planCreditsStr = "5,000,000 Chars";
+              else if (oPlan.includes("11M")) planCreditsStr = "11,000,000 Chars";
+
+              return (
+                <div key={oPlan} className="p-4 rounded-xl bg-black/60 border border-white/5 flex items-center justify-between gap-4">
+                  <div>
+                    <span className="text-xs font-bold text-white block">{oPlan}</span>
+                    <span className="text-[10px] text-gray-400 block font-mono">Instant Pool: {planCreditsStr}</span>
+                  </div>
+                  <button
+                    onClick={() => handleAcceptOffer(oPlan)}
+                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:brightness-105 text-black font-extrabold text-xs shadow-md transition-all cursor-pointer hover:shadow-amber-500/10 shrink-0"
+                  >
+                    Accept &amp; Overwrite
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       
       {/* Upper Segment: Monthly/Yearly plans display */}
       <div className="space-y-6 text-center">
@@ -369,6 +476,7 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
                 <div className="flex flex-col items-center justify-center border border-dashed border-white/10 rounded-xl p-4 bg-white/5 relative hover:border-[#00f0ff]/30 transition-colors">
                   <Upload className="w-6 h-6 text-[#00f0ff] mb-2" />
                   <span className="text-[10px] text-gray-400 text-center">Drag screenshot here or click</span>
+                  <span className="text-[9px] text-gray-500 text-center mt-0.5">Maximum upload file size: 2MB</span>
                   <input 
                     type="file" 
                     id="screenshot-input" 
@@ -407,7 +515,7 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4 text-black" />
-                    <span>Submit Payment Ticket</span>
+                    <span>Record Payment Request</span>
                   </>
                 )}
               </button>
@@ -420,8 +528,8 @@ export default function Billing({ user, onRefreshUser, onRequestSubmitted }: Bil
       {/* Feature comparison list */}
       <div className="space-y-4">
         <h3 className="text-xl font-bold text-white tracking-tight text-center">Comprehensive SaaS Feature Grid</h3>
-        <div className="overflow-hidden border border-white/5 rounded-2xl bg-[#060608]">
-          <table className="w-full border-collapse text-left text-xs font-sans text-gray-400">
+        <div className="w-full overflow-x-auto border border-white/5 rounded-2xl bg-[#060608]">
+          <table className="w-full min-w-[600px] border-collapse text-left text-xs font-sans text-gray-400">
             <thead>
               <tr className="border-b border-white/5 bg-white/5 text-gray-300 font-mono uppercase text-[10px]">
                 <th className="p-4 font-bold">Feature Name</th>

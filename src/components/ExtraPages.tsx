@@ -44,6 +44,13 @@ export default function ExtraPages({ activePage, user, history, onRefreshUser, o
   const [simulationDelay, setSimulationDelay] = useState(1);
   const [profileSuccessState, setProfileSuccessState] = useState(false);
 
+  // Sync internal form field state when user prop updates
+  React.useEffect(() => {
+    if (user?.name) {
+      setEditedName(user.name);
+    }
+  }, [user]);
+
   // Search filter for history log list
   const [historySearch, setHistorySearch] = useState("");
   const [historyCategory, setHistoryCategory] = useState("all");
@@ -58,9 +65,7 @@ export default function ExtraPages({ activePage, user, history, onRefreshUser, o
     e.preventDefault();
     if (!user) return;
     try {
-      await FirebaseIntegration.manuallyAdjustUserCredits(user.uid, user.credits, user.plan);
-      // Simulating visual title change locally
-      user.name = editedName;
+      await FirebaseIntegration.updateUserProfileName(user.uid, editedName.trim());
       setProfileSuccessState(true);
       onRefreshUser();
       setTimeout(() => setProfileSuccessState(false), 2000);
@@ -74,7 +79,7 @@ export default function ExtraPages({ activePage, user, history, onRefreshUser, o
   -H "Content-Type: application/json" \\
   -d '{
     "tool": "Text to Speech",
-    "input": "This is synthetic audio computed securely on URH Labs Nodes",
+    "input": "This is synthetic audio computed securely on URH LABS Nodes",
     "voice": "Kore (Warm Baritone)"
   }'`;
 
@@ -225,14 +230,14 @@ async function synthesizeVoiceScript() {
       {/* ========================================================== */}
       {/* 2. DEVELOPERS API PAGE                                     */}
       {/* ========================================================== */}
-      {activePage === "developers" && (
+      {activePage === "developers" && user?.role === "admin" && (
         <div className="space-y-6">
           <div className="p-6 rounded-2xl bg-gradient-to-r from-gray-950 to-black border border-white/5 space-y-1">
             <h2 className="text-2xl font-black text-white flex items-center gap-2">
               <Code className="w-5 h-5 text-[#00ff66]" /> Developer API Integration
             </h2>
             <p className="text-xs text-gray-400">
-              Integrate URH Labs synthetic vocal wave generation directly into your third-party applications.
+              Integrate URH LABS synthetic vocal wave generation directly into your third-party applications.
             </p>
           </div>
 

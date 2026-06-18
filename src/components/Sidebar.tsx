@@ -22,7 +22,8 @@ import {
   Sliders,
   AudioLines,
   UserCheck,
-  ShieldCheck
+  ShieldCheck,
+  X
 } from "lucide-react";
 import { ActivePage, UserProfile } from "../types";
 
@@ -32,9 +33,11 @@ interface SidebarProps {
   user: UserProfile | null;
   onLogout: () => void;
   onToggleRole: () => void; // Development convenience helper
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export default function Sidebar({ activePage, setActivePage, user, onLogout, onToggleRole }: SidebarProps) {
+export default function Sidebar({ activePage, setActivePage, user, onLogout, onToggleRole, isOpen, onClose }: SidebarProps) {
   // Sidebar items mapped to requested links
   const menuItems = [
     { id: "dashboard", label: "Dashboard", icon: Volume2 },
@@ -47,44 +50,66 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
     { id: "podcast-studio", label: "Podcast Studio", icon: BookOpen, category: "AI Tools" },
     { id: "history", label: "Usage History", icon: History, category: "Account" },
     { id: "billing", label: "Billing & Credits", icon: CreditCard, category: "Account" },
-    { id: "developers", label: "Developers API", icon: Code, category: "System" },
+    ...(user?.role === "admin" ? [{ id: "developers", label: "Developers API", icon: Code, category: "System" }] : []),
     { id: "settings", label: "Settings", icon: Settings, category: "System" },
   ];
 
   const categories = ["Overview", "AI Tools", "Account", "System"];
 
   return (
-    <aside className="w-68 bg-black/80 backdrop-blur-xl border-r border-[#00f0ff]/15 flex flex-col h-screen fixed left-0 top-0 z-40 text-gray-300">
-      {/* Platform Branded Header with Official URH Logo Graphic */}
-      <div className="p-6 border-b border-[#00f0ff]/15 flex items-center gap-3">
-        {/* Customized Logo using inline vectors representing requested official logo */}
-        <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00f0ff] to-[#00ff66] p-[1.5px] shadow-[0_0_15px_rgba(0,240,255,0.4)]">
-          <div className="w-full h-full bg-black rounded-lg flex items-center justify-center overflow-hidden">
-            <svg 
-              viewBox="0 0 100 100" 
-              className="w-8 h-8 text-[#00f0ff] animate-pulse"
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="5"
-            >
-              <path d="M25 75V25C25 45 40 55 50 55C60 55 75 45 75 25V75" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M50 55V85" stroke="#00ff66" strokeLinecap="round" />
-              <circle cx="50" cy="55" r="5" fill="#00ff66" />
-              {/* Voice pulse indicator */}
-              <line x1="12" y1="50" x2="12" y2="60" stroke="#00f0ff" strokeWidth="4" strokeLinecap="round" />
-              <line x1="88" y1="50" x2="88" y2="60" stroke="#00f0ff" strokeWidth="4" strokeLinecap="round" />
-            </svg>
+    <>
+      {/* Mobile background overlay backdrop */}
+      {isOpen && (
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 lg:hidden transition-all duration-350 cursor-pointer pointer-events-auto"
+          onClick={onClose}
+        />
+      )}
+
+      <aside className={`w-68 bg-[#040406]/98 lg:bg-black/90 backdrop-blur-xl border-r border-[#00f0ff]/15 flex flex-col h-screen fixed left-0 top-0 z-50 transition-transform duration-300 lg:translate-x-0 ${
+        isOpen ? "translate-x-0" : "-translate-x-full"
+      } text-gray-300`}>
+        {/* Platform Branded Header with Official URH Logo Graphic */}
+        <div className="p-6 border-b border-[#00f0ff]/15 flex items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3">
+            {/* Customized Logo using inline vectors representing requested official logo */}
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00f0ff] to-[#00ff66] p-[1.5px] shadow-[0_0_15px_rgba(0,240,255,0.4)] shrink-0">
+              <div className="w-full h-full bg-black rounded-lg flex items-center justify-center overflow-hidden">
+                <svg 
+                  viewBox="0 0 100 100" 
+                  className="w-8 h-8 text-[#00f0ff] animate-pulse"
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="5"
+                >
+                  <path d="M25 75V25C25 45 40 55 50 55C60 55 75 45 75 25V75" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M50 55V85" stroke="#00ff66" strokeLinecap="round" />
+                  <circle cx="50" cy="55" r="5" fill="#00ff66" />
+                  {/* Voice pulse indicator */}
+                  <line x1="12" y1="50" x2="12" y2="60" stroke="#00f0ff" strokeWidth="4" strokeLinecap="round" />
+                  <line x1="88" y1="50" x2="88" y2="60" stroke="#00f0ff" strokeWidth="4" strokeLinecap="round" />
+                </svg>
+              </div>
+            </div>
+            <div>
+              <h1 className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-200 to-gray-400">
+                URH <span className="text-[#00f0ff] font-semibold text-lg">Labs</span>
+              </h1>
+              <span className="text-[9px] font-mono tracking-widest text-[#00ff66] uppercase animate-pulse">
+                Neural Voice Node
+              </span>
+            </div>
           </div>
+
+          {/* Close button - only visible on tablet and mobile viewports */}
+          <button
+            onClick={onClose}
+            className="lg:hidden p-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-red-500/20 text-gray-400 hover:text-red-400 transition-all cursor-pointer flex items-center justify-center shrink-0"
+            aria-label="Close Sidebar"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <div>
-          <h1 className="text-xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-white via-gray-200 to-gray-400">
-            URH <span className="text-[#00f0ff] font-semibold text-lg">Labs</span>
-          </h1>
-          <span className="text-[9px] font-mono tracking-widest text-[#00ff66] uppercase animate-pulse">
-            Neural Voice Node
-          </span>
-        </div>
-      </div>
 
       {/* Navigation list */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6 custom-scrollbar">
@@ -108,7 +133,10 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
                   return (
                     <li key={item.id}>
                       <button
-                        onClick={() => setActivePage(item.id as ActivePage)}
+                        onClick={() => {
+                          setActivePage(item.id as ActivePage);
+                          onClose();
+                        }}
                         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-300 relative group text-left ${
                           isActive
                             ? "bg-gradient-to-r from-[#00f0ff]/10 to-transparent text-white border-l-2 border-[#00f0ff]/80 shadow-[0_0_15px_rgba(0,240,255,0.05)]"
@@ -140,7 +168,10 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
               <ShieldCheck className="w-3.5 h-3.5 text-[#00ff66]" /> Admin Console
             </span>
             <button
-              onClick={() => setActivePage("admin")}
+              onClick={() => {
+                setActivePage("admin");
+                onClose();
+              }}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-300 relative group text-left ${
                 activePage === "admin"
                   ? "bg-gradient-to-r from-red-500/10 to-transparent text-[#00ff66] border-l-2 border-[#00ff66] shadow-[0_0_15px_rgba(0,255,102,0.05)]"
@@ -174,22 +205,68 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-white/5 font-mono">
-              <span className="text-gray-400">Credits:</span>
-              <span className="text-[#00f0ff] font-bold">
-                {user.role === "admin" ? "∞ (Admin)" : user.credits.toLocaleString()} Chars
-              </span>
-            </div>
+            {user.role !== "admin" ? (() => {
+              const getPlanLimit = (planName: string): number => {
+                if (planName === "1M Characters" || planName.includes("1M")) return 1000000;
+                if (planName === "3M Characters" || planName.includes("3M")) return 3000000;
+                if (planName === "5M Characters" || planName.includes("5M")) return 5000000;
+                if (planName === "11M Characters" || planName.includes("11M")) return 11000000;
+                return 50000; // Free Plan or fallback
+              };
+
+              const limit = getPlanLimit(user.plan);
+              const remaining = Math.max(0, Math.min(limit, user.credits));
+              const used = Math.max(0, limit - remaining);
+              const remainingPct = Math.min(100, Math.max(0, (remaining / limit) * 100));
+
+              return (
+                <div className="space-y-2 pt-2 border-t border-white/5 text-[10px] font-mono text-gray-400">
+                  <div className="flex items-center justify-between">
+                    <span>Plan Package:</span>
+                    <span className="text-white font-bold">{user.plan}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Used characters:</span>
+                    <span className="text-rose-400 font-bold">{used.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Remaining characters:</span>
+                    <span className="text-[#00ff66] font-extrabold">{user.credits.toLocaleString()}</span>
+                  </div>
+
+                  {/* Real-time slider progress gauge */}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex items-center justify-between text-[8px] uppercase tracking-wider text-gray-500 font-bold">
+                      <span>Plan Health</span>
+                      <span className="text-[#00ff66]">{remainingPct.toFixed(1)}% Left</span>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-white/5 border border-white/5 overflow-hidden">
+                      <div 
+                        style={{ width: `${remainingPct}%` }}
+                        className="h-full bg-gradient-to-r from-[#00f0ff] to-[#00ff66] shadow-[0_0_8px_rgba(0,255,102,0.4)] transition-all duration-500 rounded-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : (
+              <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-white/5 font-mono">
+                <span className="text-gray-400">Credits:</span>
+                <span className="text-[#00f0ff] font-bold">∞ (Admin)</span>
+              </div>
+            )}
 
             {/* Simulated convenient toggle button for easy testing */}
-            <button 
-              onClick={onToggleRole}
-              title="Dev mode: swap user <-> admin roles to inspect layout blocks instantly"
-              className="mt-1 w-full text-[9px] font-mono text-gray-500 hover:text-[#00ff66] bg-black/40 py-1 rounded border border-white/5 hover:border-[#00ff66]/20 transition-all flex items-center justify-center gap-1"
-            >
-              <UserCheck className="w-3 h-3 text-gray-500 group-hover:text-[#00ff66]" />
-              Role: <span className={user.role === "admin" ? "text-red-400" : "text-[#00f0ff]"}>{user.role.toUpperCase()}</span>
-            </button>
+            {user.email.toLowerCase() === "usmankhalid619131@gmail.com" && (
+              <button 
+                onClick={onToggleRole}
+                title="Dev mode: swap user <-> admin roles to inspect layout blocks instantly"
+                className="mt-1 w-full text-[9px] font-mono text-gray-500 hover:text-[#00ff66] bg-black/40 py-1 rounded border border-white/5 hover:border-[#00ff66]/20 transition-all flex items-center justify-center gap-1"
+              >
+                <UserCheck className="w-3 h-3 text-gray-500 group-hover:text-[#00ff66]" />
+                Role: <span className={user.role === "admin" ? "text-red-400" : "text-[#00f0ff]"}>{user.role.toUpperCase()}</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -205,5 +282,6 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
         </button>
       </div>
     </aside>
+    </>
   );
 }

@@ -109,6 +109,21 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
     }
   };
 
+  // Grant instant premium access to a user (shortcut)
+  const grantInstantPremiumAccess = async (user: UserProfile) => {
+    const confirmation = window.confirm(`Are you sure you want to manually grant premium subscription access (11M Characters plan) to ${user.name} immediately?`);
+    if (!confirmation) return;
+    try {
+      await FirebaseIntegration.manuallyAdjustUserCredits(user.uid, 11000000, "11M Characters");
+      alert(`Access Override Success! ${user.name} has been upgraded to the Premium 11M Characters plan regardless of their payment trace.`);
+      await syncAdministrativeState();
+      onRefreshUser();
+    } catch (err) {
+      console.error(err);
+      alert("Error: Failed to register manual grant override in the database.");
+    }
+  };
+
   // Computed summary metrics
   const totalUsers = usersList.length;
   const pendingRequests = paymentsList.filter(p => p.status === "pending");
@@ -314,26 +329,98 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
                 key={user.uid}
                 className="p-3 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between gap-3 text-xs"
               >
-                <div>
-                  <h5 className="font-bold text-white">{user.name}</h5>
-                  <span className="text-[10px] text-gray-400 block truncate max-w-xs font-mono">{user.email}</span>
-                  <div className="flex gap-2 text-[9px] font-mono text-gray-500 mt-1">
-                    <span>Credits: <b className="text-[#00f0ff]">{user.role === "admin" ? "∞" : user.credits.toLocaleString()}</b></span>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h5 className="font-bold text-white leading-tight">{user.name}</h5>
+                    
+                    {/* Real-time Status Badge */}
+                    <div className="flex items-center gap-1 bg-white/[0.03] border border-white/5 px-1.5 py-0.5 rounded">
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        user.status === "online" 
+                          ? "bg-[#00ff66] animate-pulse shadow-[0_0_6px_#00ff66]" 
+                          : "bg-gray-500"
+                      }`}></span>
+                      <span className={`text-[8px] uppercase tracking-wider font-mono font-bold ${
+                        user.status === "online" ? "text-[#00ff66]" : "text-gray-400"
+                      }`}>
+                        {user.status === "online" ? "Online" : "Offline"}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <span className="text-[10px] text-gray-400 block truncate max-w-[200px] font-mono">{user.email}</span>
+                  
+                  <div className="flex flex-wrap items-center gap-2 text-[9px] font-mono text-gray-500">
+                    <span>Credits: <b className="text-[#00f0ff]">{user.role === "admin" ? "∞" : user.credits.toLocaleString()} Ch</b></span>
                     <span>•</span>
                     <span>Role: <b className="capitalize text-white">{user.role}</b></span>
+                    {user.plan && (
+                      <>
+                        <span>•</span>
+                        <span>Plan: <b className="text-gray-300">{user.plan}</b></span>
+                      </>
+                    )}
                   </div>
+
+                  {user.offeredPlans && user.offeredPlans.length > 0 && (
+                    <div className="text-[9px] font-mono text-amber-400 bg-amber-950/20 border border-amber-500/10 px-1.5 py-0.5 rounded inline-block">
+                      Promotional Offers: <b className="text-amber-300">{user.offeredPlans.join(", ")}</b>
+                    </div>
+                  )}
                 </div>
 
-                <button 
-                  onClick={() => {
-                    setSelectedUserForEdit(user);
-                    setAdjustedCredits(user.credits);
-                    setAdjustedPlan(user.plan);
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white hover:text-[#00ff66] border border-white/10 hover:border-[#00ff66]/20 text-[10px] font-mono transition-colors cursor-pointer"
-                >
-                  Adjust credits
-                </button>
+                <div className="flex flex-col gap-1.5 shrink-0 items-end">
+                  {/* Offer Plan drop selector */}
+                  {user.role !== "admin" && (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[8px] uppercase tracking-wide text-gray-500 font-mono text-right">Offer Plan</span>
+                      <select
+                        onChange={async (e) => {
+                          const planName = e.target.value;
+                          if (!planName) return;
+                          try {
+                            await FirebaseIntegration.offerPlanToUser(user.uid, planName);
+                            alert(`Promotional offer for "${planName}" successfully pitched to ${user.name}!`);
+                            await syncAdministrativeState();
+                          } catch (err) {
+                            console.error(err);
+                            alert("Failed to register plan offer.");
+                          }
+                          e.target.value = "";
+                        }}
+                        className="bg-black border border-white/10 hover:border-[#00f0ff]/40 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-300 focus:outline-none"
+                      >
+                        <option value="">Select Tier...</option>
+                        <option value="1M Characters">1M Characters</option>
+                        <option value="3M Characters">3M Characters</option>
+                        <option value="5M Characters">5M Characters</option>
+                        <option value="11M Characters">11M Characters</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="flex gap-1.5">
+                    <button 
+                      onClick={() => {
+                        setSelectedUserForEdit(user);
+                        setAdjustedCredits(user.credits);
+                        setAdjustedPlan(user.plan);
+                      }}
+                      className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white hover:text-[#00f0ff] border border-white/10 text-[9px] font-mono transition-colors cursor-pointer"
+                    >
+                      Adjust
+                    </button>
+
+                    {user.role !== "admin" && (
+                      <button 
+                        onClick={() => grantInstantPremiumAccess(user)}
+                        className="px-2 py-0.5 rounded bg-emerald-500/5 hover:bg-emerald-500 text-[#00ff66] hover:text-black hover:shadow-[0_0_8px_rgba(0,255,102,0.2)] text-[9px] font-sans font-bold transition-all cursor-pointer"
+                      >
+                        Premium
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

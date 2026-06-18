@@ -135,7 +135,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
   // FAQs
   const faqList = [
     {
-      q: "How does the voice cloning framework function inside URH Labs?",
+      q: "How does the voice cloning framework function inside URH LABS?",
       a: "Our biometric voice cloning tool analyzes short oral samples using deep acoustic neural transforms to create reusable spoken maps. These maps can instantly be mapped to arbitrary text input without needing full vocal studio re-records. Profile files are stored in strict compliance with biometric guidelines."
     },
     {
@@ -283,9 +283,9 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           </div>
 
           <h2 className="text-4xl sm:text-6xl font-black tracking-tight text-white leading-[1.1] font-sans">
-            Next Generation Spoken Accents <br />
+            Advanced Voice <br />
             <span className="bg-gradient-to-r from-[#00f0ff] via-[#00ff66] to-[#00f0ff] bg-clip-text text-transparent bg-[size:300%_300%] animate-[shimmer_8s_infinite_linear]">
-              Acoustic Synthesis Studio
+              Generation Studio
             </span>
           </h2>
 
@@ -298,13 +298,13 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               onClick={() => onGetStarted("signup")}
               className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#00f0ff] to-[#00ff66] text-black font-extrabold uppercase rounded-xl shadow-[0_0_25px_rgba(0,240,255,0.3)] hover:brightness-110 tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
-              Establish Custom Node <ArrowRight className="w-4 h-4 text-black" />
+              customer <ArrowRight className="w-4 h-4 text-black" />
             </button>
             <a 
               href="#playground"
               className="w-full sm:w-auto px-8 py-4 bg-[#0e0e11] text-gray-300 hover:text-[#00f0ff] font-bold uppercase rounded-xl border border-white/5 hover:border-[#00f0ff]/20 tracking-wider flex items-center justify-center gap-1.5 transition-all"
             >
-              Run Acoustic Playground
+              playground
             </a>
           </div>
 
@@ -627,7 +627,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               Frequently Queried Specifications
             </h3>
             <p className="text-gray-400 text-xs sm:text-sm font-sans">
-              Everything you need to know about setting up your URH Labs node.
+              Everything you need to know about setting up your URH LABS node.
             </p>
           </div>
 
@@ -726,7 +726,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
         </div>
 
         <div className="max-w-7xl mx-auto pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 font-sans text-xs text-gray-600">
-          <span>© 2026 URH Labs Inc. Neural audio designs protected by localized system state keys.</span>
+          <span>© 2026 URH LABS Inc. Neural audio designs protected by localized system state keys.</span>
           <div className="flex items-center gap-6">
             <a href="#features" className="hover:text-gray-400">Terms of System Use</a>
             <a href="#faq" className="hover:text-gray-400">Biometric Protections Policy</a>

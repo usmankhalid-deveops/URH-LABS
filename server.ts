@@ -51,14 +51,15 @@ async function startServer() {
     res.json({ status: "healthy", keyConfigured: !!geminiApiKey });
   });
 
-  // --- REAL-TIME HIGH FIDELITY TTS PROXY (GOOG TRANS) ---
-  app.get("/api/voice/proxy-tts", async (req, res) => {
+  // --- REAL-TIME HIGH FIDELITY TTS PROXY (GOOG TRANS BOTH GET AND POST) ---
+  app.all("/api/voice/proxy-tts", async (req, res) => {
     try {
-      const textToSpeak = String(req.query.text || "").trim();
-      const lang = String(req.query.lang || "en").trim();
+      const isPost = req.method === "POST";
+      const textToSpeak = String(isPost ? (req.body.text || "") : (req.query.text || "")).trim();
+      const lang = String(isPost ? (req.body.lang || "en") : (req.query.lang || "en")).trim();
 
       if (!textToSpeak) {
-        return res.status(400).send("text query parameter is required.");
+        return res.status(400).send("text content is required.");
       }
 
       // Google Translate TTS limits character length to around 150-200. Let's chunk the text by words.
@@ -85,24 +86,29 @@ async function startServer() {
         chunks.push("No inputs provided.");
       }
 
-      const audioBuffers: Buffer[] = [];
-      
-      // Request chunks sequentially to safeguard and preserve native vocal pacing
-      for (const chunk of chunks) {
+      // Request chunks parallelly with robust 3-try retries to make synthesis instantaneous-fast and bypass single-thread delays!
+      const chunkPromises = chunks.map(async (chunk) => {
         const targetUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
-        const response = await fetch(targetUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36"
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const response = await fetch(targetUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36"
+              }
+            });
+            if (response.ok) {
+              const arrBuf = await response.arrayBuffer();
+              return Buffer.from(arrBuf);
+            }
+          } catch (e) {
+            console.error(`URH Labs TTS Proxy Attempt ${attempt + 1} failed for chunk: "${chunk.substring(0, 25)}..."`, e);
           }
-        });
-
-        if (response.ok) {
-          const arrBuf = await response.arrayBuffer();
-          audioBuffers.push(Buffer.from(arrBuf));
-        } else {
-          console.error(`URH Labs TTS Proxy: Failed to convert chunk: "${chunk}" with status ${response.status}`);
         }
-      }
+        return null;
+      });
+
+      const resolvedBuffers = await Promise.all(chunkPromises);
+      const audioBuffers = resolvedBuffers.filter((b): b is Buffer => b !== null);
 
       if (audioBuffers.length === 0) {
         return res.status(502).send("Google synthesis server was unresponsive or returned error.");

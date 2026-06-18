@@ -61,6 +61,27 @@ export default function Dashboard({ user, history, setActivePage }: DashboardPro
 
   return (
     <div className="space-y-8">
+      {/* Promotional plan warning / option to navigate to Billing */}
+      {user && user.offeredPlans && user.offeredPlans.length > 0 && (
+        <div className="relative overflow-hidden p-4 rounded-xl bg-gradient-to-r from-amber-500/10 to-indigo-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-4 animate-pulse">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+              <Award className="w-5 h-5 animate-bounce" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">Administration Offered a Premium Plan Promotion!</h4>
+              <p className="text-gray-400 text-xs">You have pre-approved promotional plan offers waiting. Go to Billing to claim them instantly.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setActivePage("billing")}
+            className="px-4 py-1.5 rounded-xl bg-amber-500 hover:brightness-105 text-black font-extrabold text-xs tracking-wide transition-all shrink-0 cursor-pointer"
+          >
+            Claim Promotional Offer
+          </button>
+        </div>
+      )}
+
       {/* SaaS Greeting Card */}
       <div className="relative overflow-hidden p-8 rounded-2xl bg-gradient-to-br from-gray-950 via-black to-slate-950 border border-[#00f0ff]/15 shadow-[0_0_50px_rgba(0,240,255,0.03)] flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="absolute right-0 top-0 w-96 h-96 bg-gradient-to-br from-[#00f0ff]/10 to-[#00ff66]/5 blur-3xl pointer-events-none rounded-full" />

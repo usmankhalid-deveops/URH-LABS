@@ -11,6 +11,9 @@ export interface UserProfile {
   plan: string; // "Free Plan", "1M Characters", "3M Characters", "5M Characters", "11M Characters"
   role: "user" | "admin";
   createdAt: string;
+  status?: "online" | "offline";
+  lastActiveAt?: string;
+  offeredPlans?: string[]; // list of plans currently offered to the user
 }
 
 export interface HistoryItem {
