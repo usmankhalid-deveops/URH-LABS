@@ -75,52 +75,6 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
     }
   };
 
-  // Quick Auto Login helper for sandbox evaluation
-  const handleAutoLogin = async (role: "user" | "admin") => {
-    setIsSubmitting(true);
-    try {
-      const emailTarget = role === "admin" ? "usmankhalid619131@gmail.com" : "john@example.com";
-      const passwordTarget = role === "admin" ? "619131" : "password123";
-      const profile = await FirebaseIntegration.login(emailTarget, passwordTarget);
-      onAuthSuccess(profile);
-    } catch (err) {
-      // If profile missing, register automatically
-      try {
-        const dummyName = role === "admin" ? "Usman Khalid (Admin)" : "Mock Tester";
-        const dummyMail = role === "admin" ? "usmankhalid619131@gmail.com" : "john@example.com";
-        const passwordTarget = role === "admin" ? "619131" : "password123";
-        const profile = await FirebaseIntegration.register(dummyName, dummyMail, passwordTarget, role === "admin");
-        onAuthSuccess(profile);
-      } catch (nestedErr: any) {
-        alert(nestedErr.message || "Failed sandbox auto registration.");
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Google SSO authentication handler
-  const handleGoogleSignIn = async () => {
-    setIsSubmitting(true);
-    try {
-      const profile = await FirebaseIntegration.loginWithGoogle();
-      onAuthSuccess(profile);
-    } catch (err: any) {
-      let friendlyMessage = err.message || "Google single sign-on verification failed. Please try again.";
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed && typeof parsed === "object") {
-          friendlyMessage = `Google Account Auth Alert:\n\n[Code]: ${parsed.operationType?.toUpperCase()} on ${parsed.path || "unknown"}\n[Issue]: ${parsed.error}\n\nTip: Make sure Google Sign-In is enabled in your Firebase Authentication settings page.`;
-        }
-      } catch {
-        // Keeps standard text
-      }
-      alert(friendlyMessage);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 relative overflow-hidden font-sans">
       {/* Background neon glows */}
@@ -359,28 +313,6 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                       <ArrowRight className="w-4 h-4 text-black" />
                     </>
                   )}
-                </button>
-
-                {/* Google Sign-In Option */}
-                <div className="relative my-4 flex py-1 items-center">
-                  <div className="flex-grow border-t border-white/5"></div>
-                  <span className="flex-shrink mx-4 text-gray-500 text-[10px] uppercase font-bold tracking-wider">or continue with</span>
-                  <div className="flex-grow border-t border-white/5"></div>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={handleGoogleSignIn}
-                  className="w-full py-3 rounded-xl bg-white hover:bg-gray-100 text-black font-extrabold text-sm tracking-wide shadow flex items-center justify-center gap-2 cursor-pointer uppercase transition-all duration-200"
-                >
-                  <svg className="w-4 h-4 mr-0.5" viewBox="0 0 24 24" fill="none">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.81-2.47-.81-5.16 0-7.63z" fill="#FBBC05" />
-                    <path d="M12 5.38c1.62-.03 3.17.58 4.32 1.69l3.23-3.23C17.56 1.83 14.88 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.52z" fill="#EA4335" />
-                  </svg>
-                  <span>Google</span>
                 </button>
               </form>
 

@@ -106,7 +106,7 @@ export default function App() {
     try {
       await FirebaseIntegration.logout();
     } catch (err) {
-      console.warn("URH Labs: Handled error during logout:", err);
+      console.warn("URH LABS: Handled error during logout:", err);
     } finally {
       setUser(null);
       setShowAuthPage(false);

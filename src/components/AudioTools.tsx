@@ -227,7 +227,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
       const list = await FirebaseIntegration.getUserClonedVoices(uid);
       setClonedVoices(list);
     } catch (e) {
-      console.error("URH Labs: Failed to load cloned voices:", e);
+      console.error("URH LABS: Failed to load cloned voices:", e);
     }
   };
 
@@ -412,7 +412,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
         const clientWavUrl = generateSpeechWav(textToUse || "No text content detected.", pitch, speed, gender, archetype);
         setSynthesizedAudioUrl(clientWavUrl);
       } catch (err) {
-        console.error("URH Labs: Failed client-side Wav synthesize fallback:", err);
+        console.error("URH LABS: Failed client-side Wav synthesize fallback:", err);
       }
     }
   };
@@ -684,36 +684,25 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
         if (activePage === "text-to-speech") {
           try {
             const matchedVoice = combinedAssistants.find(a => a.name === selectedVoice);
-            const pitch = matchedVoice ? matchedVoice.pitch : 1.0;
-            const speed = matchedVoice ? matchedVoice.speed : 1.0;
-            const gender = matchedVoice ? matchedVoice.gender : "Male";
-            const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
-            const isClone = archetype.toLowerCase().includes("clone");
+            const lang = getVoiceLocale(selectedVoice);
             
-            if (isClone) {
-              // Generate dynamic WAV cleanly client-side based on the selected voice model parameters (no truncation/compression distortion)
-              const wavUrl = generateSpeechWav(textToSpeechInput, pitch, speed, gender, archetype);
-              setSynthesizedAudioUrl(wavUrl);
+            // High-fidelity natural human speech TTS proxy (Supports POST for unlimited character documents!)
+            const response = await fetch("/api/voice/proxy-tts", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                text: textToSpeechInput || "No input text provided.",
+                lang
+              })
+            });
+            if (response.ok) {
+              const blob = await response.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              setSynthesizedAudioUrl(blobUrl);
             } else {
-              // High-fidelity natural human speech TTS proxy (Supports POST for unlimited 70k+ character documents without getting cropped!)
-              const lang = getVoiceLocale(selectedVoice);
-              const response = await fetch("/api/voice/proxy-tts", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                  text: textToSpeechInput || "No input text provided.",
-                  lang
-                })
-              });
-              if (response.ok) {
-                const blob = await response.blob();
-                const blobUrl = URL.createObjectURL(blob);
-                setSynthesizedAudioUrl(blobUrl);
-              } else {
-                throw new Error("HTTP-POST proxy-tts returned error status.");
-              }
+              throw new Error("HTTP-POST proxy-tts returned error status.");
             }
           } catch (e) {
             console.error("URH LABS: Failed to construct dynamic synthesized audio file, falling back:", e);
@@ -728,35 +717,25 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
         } else if (activePage === "voice-conversion") {
           try {
             const matchedVoice = combinedAssistants.find(a => a.name === conversionTarget);
-            const pitch = matchedVoice ? matchedVoice.pitch : 1.0;
-            const speed = matchedVoice ? matchedVoice.speed : 1.0;
-            const gender = matchedVoice ? matchedVoice.gender : "Male";
-            const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
-            const isClone = archetype.toLowerCase().includes("clone");
+            const lang = getVoiceLocale(conversionTarget);
             
-            if (isClone) {
-              const wavUrl = generateSpeechWav(conversionInputText, pitch, speed, gender, archetype);
-              setSynthesizedAudioUrl(wavUrl);
+            // High-fidelity voice conversion generator utilizing robust post requests
+            const response = await fetch("/api/voice/proxy-tts", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                text: conversionInputText || "No voice conversion script content detected.",
+                lang
+              })
+            });
+            if (response.ok) {
+              const blob = await response.blob();
+              const blobUrl = URL.createObjectURL(blob);
+              setSynthesizedAudioUrl(blobUrl);
             } else {
-              // High-fidelity voice conversion generator utilizing robust post requests
-              const lang = getVoiceLocale(conversionTarget);
-              const response = await fetch("/api/voice/proxy-tts", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                  text: conversionInputText || "No voice conversion script content detected.",
-                  lang
-                })
-              });
-              if (response.ok) {
-                const blob = await response.blob();
-                const blobUrl = URL.createObjectURL(blob);
-                setSynthesizedAudioUrl(blobUrl);
-              } else {
-                throw new Error("HTTP-POST proxy-tts returned error status for voice conversion.");
-              }
+              throw new Error("HTTP-POST proxy-tts returned error status for voice conversion.");
             }
           } catch (e) {
             console.error("URH LABS: Failed to construct converted cloning synthesis audio:", e);
@@ -1209,7 +1188,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                         setCloneSavedSuccess(true);
                         await loadClonedVoices();
                       } catch (err) {
-                        console.error("URH Labs: Failed to write cloned voice:", err);
+                        console.error("URH LABS: Failed to write cloned voice:", err);
                         alert("Failed to save voice clone.");
                       } finally {
                         setIsSavingClone(false);

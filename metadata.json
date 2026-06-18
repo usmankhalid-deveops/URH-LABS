@@ -1,5 +1,5 @@
 {
-  "name": "URH Labs",
+  "name": "URH LABS",
   "description": "Premium AI Voice Platform offering Text to Speech, Voice Cloning, Voice Conversion, Dubbing, and Podcast Studio using Gemini AI.",
   "requestFramePermissions": [
     "microphone"

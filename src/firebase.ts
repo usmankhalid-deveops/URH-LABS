@@ -287,7 +287,7 @@ if (!localStorage.getItem(LOCAL_HISTORY_KEY)) {
       id: "hist-1",
       userId: "user-uid",
       tool: "Text to Speech",
-      request: "Welcome to URH Labs. Experience the next generation of voice synthesis.",
+      request: "Welcome to URH LABS. Experience the next generation of voice synthesis.",
       response: "Synthesized Voice Clip (Friendly Male) generated successfully.",
       creditsUsed: 68,
       createdAt: new Date(Date.now() - 1800000).toISOString()
