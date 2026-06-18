@@ -103,10 +103,15 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await FirebaseIntegration.logout();
-    setUser(null);
-    setShowAuthPage(false);
-    setActivePage("dashboard");
+    try {
+      await FirebaseIntegration.logout();
+    } catch (err) {
+      console.warn("URH Labs: Handled error during logout:", err);
+    } finally {
+      setUser(null);
+      setShowAuthPage(false);
+      setActivePage("dashboard");
+    }
   };
 
   const handleAddHistory = (item: HistoryItem) => {

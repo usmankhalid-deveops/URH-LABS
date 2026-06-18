@@ -163,31 +163,14 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
             </div>
           </div>
 
-          {/* Seed accounts for rapid sandbox audits */}
-          <div className="space-y-3 border-t border-white/5 pt-6 mt-6">
-            <span className="text-[10px] font-mono tracking-widest text-[#00ff66] uppercase block font-bold flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5 text-[#00f0ff]" /> Sandbox Audit Portals
+          {/* Secure System Access */}
+          <div className="space-y-2 border-t border-white/5 pt-6 mt-6">
+            <span className="text-[10px] font-mono tracking-widest text-gray-500 uppercase block font-bold flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5 text-[#00f0ff]" /> Access Control Enabled
             </span>
-            <p className="text-[10px] text-gray-500 font-sans leading-normal">
-              Click to instantly bypass credentials and login under standard or administrative roles:
+            <p className="text-[10px] text-gray-400 font-sans leading-normal">
+              Unauthorized access attempt logs are audited live. Registered system administrators must authenticate using secure credentials.
             </p>
-
-            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <button
-                type="button"
-                onClick={() => handleAutoLogin("user")}
-                className="py-2 rounded-lg bg-[#00f0ff]/10 hover:bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/20 font-bold tracking-wide transition-all uppercase flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <UserCheck className="w-3 h-3 text-[#00f0ff]" /> User Login
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAutoLogin("admin")}
-                className="py-2 rounded-lg bg-[#00ff66]/10 hover:bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/20 font-bold tracking-wide transition-all uppercase flex items-center justify-center gap-1 cursor-pointer"
-              >
-                <ShieldAlert className="w-3 h-3 text-[#00ff66]" /> Admin Login
-              </button>
-            </div>
           </div>
         </div>
 

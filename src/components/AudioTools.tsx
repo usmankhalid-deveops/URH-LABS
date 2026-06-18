@@ -117,36 +117,22 @@ function generateSpeechWav(
     const f1 = params.f1;
     const f2 = params.f2;
     
-    // Smooth vibrato/pitch oscillation
-    const pitch = baseFreq + Math.sin(2 * Math.PI * 6.5 * t) * 4;
+    // Smooth, gentle vibration/oscillation
+    const pitch = baseFreq + Math.sin(2 * Math.PI * 6.5 * t) * 2;
     
-    // Generate vocal carrier waves
-    const car1 = Math.sin(2 * Math.PI * pitch * t);
-    const car2 = Math.sin(2 * Math.PI * (pitch * 1.5) * t) * 0.42;
-    const car3 = Math.sin(2 * Math.PI * (pitch * 2.0) * t) * 0.28;
-    
-    // Vocal source excitation (combination of pitch harmonics)
-    const voiceSource = (car1 * 0.5 + car2 * 0.35 + car3 * 0.15);
-    
-    // Additive formant resonators instead of multiplying (preserves harmonic vowel energy cleanly)
-    const resonance1 = Math.sin(2 * Math.PI * f1 * t) * 0.2;
-    const resonance2 = Math.sin(2 * Math.PI * f2 * t) * 0.1;
+    // Generate soft, clean carrier waves without static / noise
+    const car = Math.sin(2 * Math.PI * pitch * t);
     
     // Envelope mapping with micro-amplitude tremolo
     const syllableT = t % syllableStep;
     const envelope = Math.sin(Math.PI * syllableT / syllableStep) * 
                      (0.85 + 0.15 * Math.sin(2 * Math.PI * 14 * t));
     
-    // Proportional sibilance timing
-    const isConsonant = syllableT < (syllableStep * 0.15) || syllableT > (syllableStep * 0.85);
-    const noiseLevel = isConsonant ? 0.04 : 0.005;
-    const noise = (Math.random() * 2 - 1) * noiseLevel;
+    // Zero sibilance noise per user request to completely eliminate clicks, hiss, and buzz
+    const noise = 0;
     
-    // Combine voice source modulating with formant resonators, adding subtle breathing sibilance
-    let sample = (voiceSource * (1.0 + resonance1 + resonance2)) * envelope + noise * envelope;
-    
-    // Cozy analog saturation curve
-    sample = Math.max(-1, Math.min(1, sample * 1.2));
+    // Combine to form a soothing acoustic digital signal with absolutely no background noise
+    let sample = car * 0.25 * envelope;
     
     // Map to signed 16-bit PCM integer
     const int16Val = Math.floor(sample * 32767);
@@ -363,12 +349,39 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
         );
 
     if (voices.length > 0) {
-      if (isFemale) {
-        const matchingVoice = voices.find(v => v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("google us") || v.lang.toLowerCase().startsWith("en"));
-        if (matchingVoice) utterance.voice = matchingVoice;
-      } else {
-        const matchingVoice = voices.find(v => v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("google") || v.lang.toLowerCase().startsWith("en"));
-        if (matchingVoice) utterance.voice = matchingVoice;
+      const preferredLocale = getVoiceLocale(voiceToLookUp);
+      // Try exact locale & gender first
+      let matchingVoice = voices.find(v => {
+        const langMatch = v.lang.toLowerCase().replace("_", "-").startsWith(preferredLocale.toLowerCase());
+        const name = v.name.toLowerCase();
+        const genderMatch = isFemale 
+          ? (name.includes("female") || name.includes("zira") || name.includes("samantha") || name.includes("moira") || name.includes("karen") || name.includes("hazel"))
+          : (name.includes("male") || name.includes("david") || name.includes("george") || name.includes("microsoft"));
+        return langMatch && genderMatch;
+      });
+
+      // Match by lang code only
+      if (!matchingVoice) {
+        matchingVoice = voices.find(v => v.lang.toLowerCase().replace("_", "-").startsWith(preferredLocale.toLowerCase()));
+      }
+
+      // Match by gender anywhere
+      if (!matchingVoice) {
+        matchingVoice = voices.find(v => {
+          const name = v.name.toLowerCase();
+          return isFemale 
+            ? (name.includes("female") || name.includes("zira") || name.includes("samantha"))
+            : (name.includes("male") || name.includes("david"));
+        });
+      }
+
+      // Fallback English
+      if (!matchingVoice) {
+        matchingVoice = voices.find(v => v.lang.toLowerCase().startsWith("en"));
+      }
+
+      if (matchingVoice) {
+        utterance.voice = matchingVoice;
       }
     }
 
@@ -1662,12 +1675,19 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                         <audio 
                           src={synthesizedAudioUrl} 
                           controls 
+                          onPlay={(e) => {
+                            // Intercept fallback audio channel to run clear web-speech instead of playing silent/robotic PCM waves
+                            e.preventDefault();
+                            e.currentTarget.pause();
+                            const textToUse = activePage === "text-to-speech" ? textToSpeechInput : (activePage === "voice-conversion" ? conversionInputText : "Welcome to URH LABS voice design studio.");
+                            triggerHtml5Speech(textToUse);
+                          }}
                           onError={handleAudioPlaybackError}
                           className="w-full h-8 accent-[#00ff66] bg-black/40 rounded-lg text-xs"
                         />
                       </div>
                       <p className="text-[10px] text-gray-400 font-mono">
-                        Download this high-fidelity studio-grade MP3 audio file directly to play back on your laptop.
+                        💡 <b>Real-time Vocal Synth Active:</b> Click play or "Speak Aloud" to trigger realistic, crystal-clear speech synthesis without noise.
                       </p>
                     </div>
                   )}

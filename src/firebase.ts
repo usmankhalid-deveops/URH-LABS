@@ -219,7 +219,13 @@ const DEFAULT_ADMIN_EMAIL = "usmankhalid619131@gmail.com";
 // Helper to check if email qualifies for admin role
 export function isAdminEmail(email: string): boolean {
   const cleanEmail = email.trim().toLowerCase();
-  return cleanEmail === DEFAULT_ADMIN_EMAIL;
+  return (
+    cleanEmail === DEFAULT_ADMIN_EMAIL ||
+    cleanEmail === "usman khalid" ||
+    cleanEmail === "usman" ||
+    cleanEmail === "usmankhalid" ||
+    cleanEmail === "usmankhalid619131ics@gmail.com"
+  );
 }
 
 // Initialize local database with some mocked user and history sample values if empty
@@ -401,10 +407,21 @@ export const FirebaseIntegration = {
   },
 
   login: async (email: string, password: string): Promise<UserProfile> => {
-    const trimmedEmail = email.trim().toLowerCase();
+    let trimmedEmail = email.trim().toLowerCase();
+    
+    // Dynamic mapping for system administrator display name to official admin email
+    if (
+      trimmedEmail === "usman khalid" ||
+      trimmedEmail === "usman" ||
+      trimmedEmail === "usmankhalid" ||
+      trimmedEmail === "usmankhalid619131ics@gmail.com"
+    ) {
+      trimmedEmail = DEFAULT_ADMIN_EMAIL.toLowerCase();
+    }
+    
     const isUserAdmin = isAdminEmail(trimmedEmail);
     
-    // Strict admin credential validation
+    // Strict admin credential validation (using dynamic password 619131)
     if (isUserAdmin && password !== "619131") {
       throw new Error("Access Denied: Invalid credentials for this designated admin account. Password must be 619131.");
     }
@@ -815,17 +832,26 @@ export const FirebaseIntegration = {
 
   logout: async () => {
     const current = FirebaseIntegration.getCurrentUser();
-    if (current) {
-      try {
-        await FirebaseIntegration.updateUserStatus(current.uid, "offline");
-      } catch (e) {
-        console.warn("URH Labs: Failed to set status to offline during logout:", e);
-      }
-    }
+    
+    // Clear local storage and trigger updates instantly so the UI responds immediately!
     localStorage.removeItem(CURRENT_USER_KEY);
     window.dispatchEvent(new Event("storage"));
-    if (isRealFirebase && firebaseAuth) {
-      await signOut(firebaseAuth);
+
+    // Async update offline status to Firestore so we don't block the frontend
+    if (current) {
+      FirebaseIntegration.updateUserStatus(current.uid, "offline").catch((e) => {
+        console.warn("URH Labs: Failed to set status to offline during logout:", e);
+      });
+    }
+
+    try {
+      if (isRealFirebase && firebaseAuth) {
+        await runWithTimeout(signOut(firebaseAuth), 1500).catch((e) => {
+          console.warn("URH Labs: signOut timed out or failed:", e);
+        });
+      }
+    } catch (e) {
+      console.warn("URH Labs: Failed to sign out of Firebase auth:", e);
     }
   },
 
