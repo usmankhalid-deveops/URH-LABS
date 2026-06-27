@@ -40,9 +40,10 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       // On creation, users can initialize their own records
       allow create: if isSignedIn() && userId == request.auth.uid;
-      // Users can update their own profile, but only admins can change roles or manually edit credits
+      // Users can update their own profile (including tracking duration), but they cannot change their role, and can only decrease or maintain their credits.
       allow update: if isOwner(userId) && (
-        !incoming().diff(existing()).affectedKeys().hasAny(['role', 'credits'])
+        !incoming().diff(existing()).affectedKeys().hasAny(['role']) &&
+        (incoming().credits <= existing().credits || isAdmin())
       ) || isAdmin();
     }
 

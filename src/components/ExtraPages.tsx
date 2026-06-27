@@ -496,7 +496,10 @@ async function synthesizeVoiceScript() {
                     <span className="flex items-center gap-1.5">
                       <Award className="w-4 h-4 text-[#00ff66]" /> {user?.plan}
                     </span>
-                    <span className="text-[#00ff66]">{user?.role === "admin" ? "∞ (Standard Bypass)" : user?.credits.toLocaleString()} Chars Left</span>
+                    <div className="text-right flex flex-col items-end leading-none">
+                      <span className="text-[#00ff66] font-bold">{user?.role === "admin" ? "∞ (Standard Bypass)" : `${user?.credits.toLocaleString()} Chars Left`}</span>
+                      <span className="text-[8px] text-gray-500 font-mono mt-1">As of {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                    </div>
                   </div>
                 </div>
 

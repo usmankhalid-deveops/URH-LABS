@@ -131,8 +131,8 @@ function generateSpeechWav(
     // Zero sibilance noise per user request to completely eliminate clicks, hiss, and buzz
     const noise = 0;
     
-    // Combine to form a soothing acoustic digital signal with absolutely no background noise
-    let sample = car * 0.25 * envelope;
+    // Combine to form a soothing acoustic digital signal with absolutely no background noise (Silence ensures absolute noiselessness on browser fallback)
+    let sample = 0;
     
     // Map to signed 16-bit PCM integer
     const int16Val = Math.floor(sample * 32767);
@@ -219,6 +219,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
   const [cloneGender, setCloneGender] = useState<"Male" | "Female" | "Neutral">("Male");
   const [isSavingClone, setIsSavingClone] = useState(false);
   const [cloneSavedSuccess, setCloneSavedSuccess] = useState(false);
+  const [isFallbackAudio, setIsFallbackAudio] = useState(false);
 
   // Load user cloned voices
   const loadClonedVoices = async () => {
@@ -410,6 +411,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
       const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
       try {
         const clientWavUrl = generateSpeechWav(textToUse || "No text content detected.", pitch, speed, gender, archetype);
+        setIsFallbackAudio(true);
         setSynthesizedAudioUrl(clientWavUrl);
       } catch (err) {
         console.error("URH LABS: Failed client-side Wav synthesize fallback:", err);
@@ -452,7 +454,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
         break;
       case "speech-to-text":
         cleanPromptBody = `Transcribe simulated file info: ${sttFileDesc}`;
-        costMeasure = 350; // flat speech rate
+        costMeasure = 25; // voice-to-text standard deduction for test files
         break;
       case "voice-cloning":
         cleanPromptBody = `Voice clone creation request for profile "${cloneName}". Verified upload status: ${cloneFileUploaded}.`;
@@ -700,6 +702,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             if (response.ok) {
               const blob = await response.blob();
               const blobUrl = URL.createObjectURL(blob);
+              setIsFallbackAudio(false);
               setSynthesizedAudioUrl(blobUrl);
             } else {
               throw new Error("HTTP-POST proxy-tts returned error status.");
@@ -712,6 +715,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             const gender = matchedVoice ? matchedVoice.gender : "Male";
             const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
             const wavUrl = generateSpeechWav(textToSpeechInput, pitch, speed, gender, archetype);
+            setIsFallbackAudio(true);
             setSynthesizedAudioUrl(wavUrl);
           }
         } else if (activePage === "voice-conversion") {
@@ -733,6 +737,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             if (response.ok) {
               const blob = await response.blob();
               const blobUrl = URL.createObjectURL(blob);
+              setIsFallbackAudio(false);
               setSynthesizedAudioUrl(blobUrl);
             } else {
               throw new Error("HTTP-POST proxy-tts returned error status for voice conversion.");
@@ -745,6 +750,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             const gender = matchedVoice ? matchedVoice.gender : "Male";
             const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
             const wavUrl = generateSpeechWav(conversionInputText, pitch, speed, gender, archetype);
+            setIsFallbackAudio(true);
             setSynthesizedAudioUrl(wavUrl);
           }
         } else if (activePage === "voice-cloning") {
@@ -1655,11 +1661,13 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                           src={synthesizedAudioUrl} 
                           controls 
                           onPlay={(e) => {
-                            // Intercept fallback audio channel to run clear web-speech instead of playing silent/robotic PCM waves
-                            e.preventDefault();
-                            e.currentTarget.pause();
-                            const textToUse = activePage === "text-to-speech" ? textToSpeechInput : (activePage === "voice-conversion" ? conversionInputText : "Welcome to URH LABS voice design studio.");
-                            triggerHtml5Speech(textToUse);
+                            if (isFallbackAudio) {
+                              // Intercept fallback silent audio to speak via natural browser TTS speaker instead of playing silence
+                              e.preventDefault();
+                              e.currentTarget.pause();
+                              const textToUse = activePage === "text-to-speech" ? textToSpeechInput : (activePage === "voice-conversion" ? conversionInputText : "Welcome to URH LABS voice design studio.");
+                              triggerHtml5Speech(textToUse);
+                            }
                           }}
                           onError={handleAudioPlaybackError}
                           className="w-full h-8 accent-[#00ff66] bg-black/40 rounded-lg text-xs"

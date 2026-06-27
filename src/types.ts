@@ -14,6 +14,9 @@ export interface UserProfile {
   status?: "online" | "offline";
   lastActiveAt?: string;
   offeredPlans?: string[]; // list of plans currently offered to the user
+  usedDuration?: number; // total elapsed usage time in seconds
+  lastSignInAt?: string; // ISO timestamp of last sign-in
+  totalPackageDuration?: number; // total allocated package duration in seconds
 }
 
 export interface HistoryItem {

@@ -10,7 +10,10 @@
         "credits": { "type": "number", "description": "Character or query credits available" },
         "plan": { "type": "string", "description": "Free, 1M, 3M, 5M, or 11M Characters" },
         "role": { "type": "string", "enum": ["user", "admin"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "usedDuration": { "type": "number", "description": "Total elapsed package usage duration in seconds" },
+        "lastSignInAt": { "type": "string", "format": "date-time", "description": "ISO timestamp of last sign-in" },
+        "totalPackageDuration": { "type": "number", "description": "Total allocated duration for current package in seconds" }
       },
       "required": ["name", "email", "credits", "plan", "role", "createdAt"]
     },

@@ -163,6 +163,9 @@ export default function Dashboard({ user, history, setActivePage }: DashboardPro
               <span className="text-sm font-semibold font-mono text-[#00ff66]">
                 {user?.role === "admin" ? "Infinite" : remaining.toLocaleString()} Chars
               </span>
+              <span className="text-[8px] text-gray-500 font-mono block mt-0.5">
+                As of {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
             </div>
           </div>
         </div>

@@ -233,6 +233,10 @@ export default function Sidebar({ activePage, setActivePage, user, onLogout, onT
                     <span>Remaining characters:</span>
                     <span className="text-[#00ff66] font-extrabold">{user.credits.toLocaleString()}</span>
                   </div>
+                  <div className="flex items-center justify-between text-[8px] text-gray-500 font-mono">
+                    <span>As of:</span>
+                    <span>{new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </div>
 
                   {/* Real-time slider progress gauge */}
                   <div className="space-y-1 pt-1">

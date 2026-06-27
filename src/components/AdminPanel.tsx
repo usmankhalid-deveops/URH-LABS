@@ -17,7 +17,10 @@ import {
   Database,
   Lock,
   Eye,
-  AudioLines
+  AudioLines,
+  Terminal,
+  Table,
+  Play
 } from "lucide-react";
 import { UserProfile, PaymentRequest } from "../types";
 import { FirebaseIntegration } from "../firebase";
@@ -44,6 +47,16 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
   const [adjustedCredits, setAdjustedCredits] = useState<number>(100000);
   const [adjustedPlan, setAdjustedPlan] = useState<string>("1M Characters");
 
+  // SQL Console states
+  const [activeSqlTab, setActiveSqlTab] = useState<"schema" | "console">("console");
+  const [selectedSqlTable, setSelectedSqlTable] = useState<"users" | "history" | "payments" | "cloned_voices">("users");
+  const [sqlQuery, setSqlQuery] = useState<string>("SELECT * FROM users;");
+  const [sqlResult, setSqlResult] = useState<{ columns: string[]; rows: any[] } | null>(null);
+  const [sqlError, setSqlError] = useState<string | null>(null);
+  const [isExecutingSql, setIsExecutingSql] = useState<boolean>(false);
+  const [fullHistoryLogs, setFullHistoryLogs] = useState<any[]>([]);
+  const [allClonedVoices, setAllClonedVoices] = useState<any[]>([]);
+
   // Data prefetcher
   const syncAdministrativeState = async () => {
     setLoading(true);
@@ -52,11 +65,154 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
       const pList = await FirebaseIntegration.getPaymentRequests();
       setUsersList(uList);
       setPaymentsList(pList);
+
+      // Fetch history and cloned voices for the SQL Console
+      const hList = await FirebaseIntegration.getAllHistory();
+      setFullHistoryLogs(hList);
+
+      const voicesPromises = uList.map(async (u) => {
+        try {
+          const v = await FirebaseIntegration.getUserClonedVoices(u.uid);
+          return v.map((item: any) => ({ ...item, userEmail: u.email, userName: u.name }));
+        } catch {
+          return [];
+        }
+      });
+      const resolvedVoices = await Promise.all(voicesPromises);
+      setAllClonedVoices(resolvedVoices.flat());
     } catch (err) {
       console.error("Failed to prefetch admin details:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const executeSqlQuery = () => {
+    setIsExecutingSql(true);
+    setSqlError(null);
+    setSqlResult(null);
+    
+    setTimeout(() => {
+      try {
+        const cleanQuery = sqlQuery.trim().replace(/;$/, "").replace(/\s+/g, " ");
+        const selectMatch = cleanQuery.match(/^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.*?))?(?:\s+ORDER\s+BY\s+(.*?))?$/i);
+        
+        if (!selectMatch) {
+          throw new Error("Syntax Error: Only SELECT queries are permitted in this Read-Only SQL Console. E.g., 'SELECT * FROM users;'");
+        }
+        
+        const [, columnsStr, tableName, whereStr, orderByStr] = selectMatch;
+        const normalizedTableName = tableName.toLowerCase();
+        
+        // Match table
+        let sourceData: any[] = [];
+        if (normalizedTableName === "users") {
+          sourceData = usersList;
+        } else if (normalizedTableName === "history") {
+          sourceData = fullHistoryLogs;
+        } else if (normalizedTableName === "payments" || normalizedTableName === "payment_requests") {
+          sourceData = paymentsList;
+        } else if (normalizedTableName === "cloned_voices" || normalizedTableName === "voices") {
+          sourceData = allClonedVoices;
+        } else {
+          throw new Error(`Table '${tableName}' does not exist. Available tables: users, history, payments, cloned_voices`);
+        }
+        
+        // Filter rows (where clause)
+        let filteredRows = [...sourceData];
+        if (whereStr) {
+          const whereParts = whereStr.split(/\s+AND\s+/i);
+          whereParts.forEach(part => {
+            const eqMatch = part.match(/(\w+)\s*=\s*'([^']*)'/i);
+            const numMatch = part.match(/(\w+)\s*=\s*(\d+)/i);
+            const likeMatch = part.match(/(\w+)\s+LIKE\s+'%([^%]*)%'/i);
+            
+            if (eqMatch) {
+              const [, field, val] = eqMatch;
+              filteredRows = filteredRows.filter(row => String(row[field] || "").toLowerCase() === val.toLowerCase());
+            } else if (numMatch) {
+              const [, field, val] = numMatch;
+              filteredRows = filteredRows.filter(row => Number(row[field]) === Number(val));
+            } else if (likeMatch) {
+              const [, field, val] = likeMatch;
+              filteredRows = filteredRows.filter(row => String(row[field] || "").toLowerCase().includes(val.toLowerCase()));
+            } else {
+              throw new Error(`Unsupported SQL Filter syntax in WHERE clause: '${part}'. Supported: field = 'val', field = 123, field LIKE '%val%'`);
+            }
+          });
+        }
+        
+        // Sort rows (order by clause)
+        if (orderByStr) {
+          const orderMatch = orderByStr.match(/(\w+)(?:\s+(ASC|DESC))?/i);
+          if (orderMatch) {
+            const [, field, direction] = orderMatch;
+            const isDesc = direction && direction.toUpperCase() === "DESC";
+            filteredRows.sort((a, b) => {
+              const valA = a[field];
+              const valB = b[field];
+              if (typeof valA === "number" && typeof valB === "number") {
+                return isDesc ? valB - valA : valA - valB;
+              }
+              const strA = String(valA || "").toLowerCase();
+              const strB = String(valB || "").toLowerCase();
+              return isDesc 
+                ? (strA < strB ? 1 : strA > strB ? -1 : 0)
+                : (strA > strB ? 1 : strA < strB ? -1 : 0);
+            });
+          }
+        }
+        
+        // Group query check (e.g. SUM aggregation)
+        const isAggregate = columnsStr.toUpperCase().includes("SUM(") || columnsStr.toUpperCase().includes("COUNT(");
+        
+        if (isAggregate) {
+          if (normalizedTableName === "history") {
+            const sumCredits = filteredRows.reduce((sum, h) => sum + (h.creditsUsed || 0), 0);
+            setSqlResult({
+              columns: ["total_records", "total_characters_used"],
+              rows: [{ total_records: filteredRows.length, total_characters_used: sumCredits }]
+            });
+            return;
+          } else {
+            throw new Error("Aggregation logic is supported for the 'history' table (e.g., SELECT SUM(creditsUsed) FROM history).");
+          }
+        }
+        
+        // Select specific columns
+        let finalColumns: string[] = [];
+        if (columnsStr === "*") {
+          if (normalizedTableName === "users") {
+            finalColumns = ["uid", "name", "email", "credits", "plan", "role", "createdAt", "status"];
+          } else if (normalizedTableName === "history") {
+            finalColumns = ["id", "userId", "tool", "request", "response", "creditsUsed", "createdAt"];
+          } else if (normalizedTableName === "payments") {
+            finalColumns = ["id", "userId", "userEmail", "userName", "amount", "status", "createdAt"];
+          } else if (normalizedTableName === "cloned_voices") {
+            finalColumns = ["id", "userId", "name", "description", "gender", "archetype", "pitch", "speed", "createdAt"];
+          }
+        } else {
+          finalColumns = columnsStr.split(",").map(c => c.trim());
+        }
+        
+        const finalRows = filteredRows.map(row => {
+          const selectedRow: any = {};
+          finalColumns.forEach(col => {
+            selectedRow[col] = row[col];
+          });
+          return selectedRow;
+        });
+        
+        setSqlResult({
+          columns: finalColumns,
+          rows: finalRows
+        });
+      } catch (err: any) {
+        setSqlError(err.message || "An error occurred executing the query.");
+      } finally {
+        setIsExecutingSql(false);
+      }
+    }, 400);
   };
 
   useEffect(() => {
@@ -346,6 +502,20 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
                         {user.status === "online" ? "Online" : "Offline"}
                       </span>
                     </div>
+
+                    {/* New User Check & Badge */}
+                    {(() => {
+                      if (!user.createdAt) return null;
+                      const diffDays = Math.abs(new Date().getTime() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+                      if (diffDays <= 2.5) {
+                        return (
+                          <span className="bg-[#00ff66]/10 text-[#00ff66] border border-[#00ff66]/20 text-[8px] px-1.5 py-0.5 rounded uppercase font-mono font-bold">
+                            New User
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                   
                   <span className="text-[10px] text-gray-400 block truncate max-w-[200px] font-mono">{user.email}</span>
@@ -360,6 +530,8 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
                         <span>Plan: <b className="text-gray-300">{user.plan}</b></span>
                       </>
                     )}
+                    <span>•</span>
+                    <span>Joined: <b className="text-gray-400">{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "Legacy"}</b></span>
                   </div>
 
                   {user.offeredPlans && user.offeredPlans.length > 0 && (
@@ -477,6 +649,456 @@ export default function AdminPanel({ currentUser, onRefreshUser }: AdminPanelPro
 
         </div>
 
+      </div>
+
+      {/* Relational SQL Database Console */}
+      <div className="p-6 rounded-2xl bg-[#090a0f] border border-white/5 space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-extrabold uppercase font-mono tracking-wider text-gray-300 flex items-center gap-2">
+              <Database className="w-4 h-4 text-[#00f0ff]" /> Relational SQL Console & Schema Registry
+            </h3>
+            <p className="text-[10px] text-gray-500 font-sans">
+              Connected to Cloud SQL / Firestore database. Run standard SELECT queries to audit users, history logs, payments, and custom cloned voice records.
+            </p>
+          </div>
+          
+          <div className="flex rounded-lg bg-black p-1 font-mono text-[10px] border border-white/5 self-start">
+            <button
+              onClick={() => {
+                setActiveSqlTab("console");
+                setSqlQuery("SELECT * FROM users;");
+                setSqlResult(null);
+                setSqlError(null);
+              }}
+              className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                activeSqlTab === "console" 
+                  ? "bg-gradient-to-r from-[#00f0ff]/15 to-[#00ff66]/15 text-white border border-[#00f0ff]/20 font-bold" 
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              SQL Query Console
+            </button>
+            <button
+              onClick={() => setActiveSqlTab("schema")}
+              className={`px-3 py-1 rounded transition-colors cursor-pointer ${
+                activeSqlTab === "schema" 
+                  ? "bg-gradient-to-r from-[#00f0ff]/15 to-[#00ff66]/15 text-white border border-[#00f0ff]/20 font-bold" 
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Schema Registry
+            </button>
+          </div>
+        </div>
+
+        {activeSqlTab === "schema" ? (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            {/* Table list */}
+            <div className="md:col-span-4 space-y-2">
+              <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-gray-500 block">Available Tables</span>
+              <div className="flex flex-col gap-1">
+                {(["users", "history", "payments", "cloned_voices"] as const).map((tbl) => (
+                  <button
+                    key={tbl}
+                    onClick={() => setSelectedSqlTable(tbl)}
+                    className={`p-3 rounded-xl border text-left font-mono text-xs transition-all cursor-pointer ${
+                      selectedSqlTable === tbl 
+                        ? "bg-white/5 border-[#00f0ff]/30 text-white font-bold" 
+                        : "bg-black/40 border-white/5 text-gray-400 hover:bg-white/[0.02] hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Table className="w-3.5 h-3.5 text-[#00f0ff]" />
+                      <span>{tbl}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Schema detail */}
+            <div className="md:col-span-8 p-4 bg-black/60 border border-white/5 rounded-xl space-y-4">
+              <div className="flex items-center gap-2 font-mono text-xs text-white border-b border-white/5 pb-2">
+                <span className="text-gray-500">TABLE:</span>
+                <span className="text-[#00ff66] font-bold">{selectedSqlTable}</span>
+                <span className="text-[9px] text-gray-500 ml-auto uppercase bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                  Firestore Relational Mirror
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-[11px] font-mono">
+                  <thead>
+                    <tr className="border-b border-white/10 text-gray-400">
+                      <th className="pb-2 font-bold">Column Name</th>
+                      <th className="pb-2 font-bold">SQL Type</th>
+                      <th className="pb-2 font-bold">Constraint</th>
+                      <th className="pb-2 font-bold">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 text-gray-300">
+                    {selectedSqlTable === "users" && (
+                      <>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">uid</td>
+                          <td className="py-2 text-indigo-400 font-bold">VARCHAR(128)</td>
+                          <td className="py-2 text-amber-500 font-bold">PRIMARY KEY</td>
+                          <td className="py-2 text-gray-400">Unique identifier matching Firebase Auth uid.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">name</td>
+                          <td className="py-2 text-indigo-400 font-bold">VARCHAR(255)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400 font-bold">Full name of the user.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">email</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(255)</td>
+                          <td className="py-2">UNIQUE, NOT NULL</td>
+                          <td className="py-2 text-gray-400">Email address of the user (all lowercase).</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">credits</td>
+                          <td className="py-2 text-indigo-400">INTEGER</td>
+                          <td className="py-2">DEFAULT 50000</td>
+                          <td className="py-2 text-gray-400">Character credit balance for voice synthesis.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">plan</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(64)</td>
+                          <td className="py-2">DEFAULT 'Free Plan'</td>
+                          <td className="py-2 text-gray-400">Current subscription tier name.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">role</td>
+                          <td className="py-2 text-indigo-400 font-bold">VARCHAR(32)</td>
+                          <td className="py-2">DEFAULT 'user'</td>
+                          <td className="py-2 text-gray-400">Access authority level ('user' | 'admin').</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">createdAt</td>
+                          <td className="py-2 text-indigo-400 font-bold">TIMESTAMP</td>
+                          <td className="py-2">DEFAULT CURRENT_TIMESTAMP</td>
+                          <td className="py-2 text-gray-400 font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#00f0ff] to-[#00ff66]">The UTC registration date and time.</td>
+                        </tr>
+                      </>
+                    )}
+                    {selectedSqlTable === "history" && (
+                      <>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">id</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-amber-500 font-bold">PRIMARY KEY</td>
+                          <td className="py-2 text-gray-400">Unique log record key.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">userId</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-blue-400 font-bold">FOREIGN KEY (users.uid)</td>
+                          <td className="py-2 text-gray-400 font-bold text-indigo-400">Reference of user who executed the voice tool.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">tool</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400 font-bold text-indigo-400">The specific AI voice module used.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">request</td>
+                          <td className="py-2 text-indigo-400">TEXT</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The input query prompt or characters submitted.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">response</td>
+                          <td className="py-2 text-indigo-400 font-bold">TEXT</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The resulting transcript summary or vocal report metadata.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">creditsUsed</td>
+                          <td className="py-2 text-indigo-400 font-bold text-[#00f0ff]">INTEGER</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400 font-bold text-[#00ff66]">How many character credits were deducted/used for this query.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">createdAt</td>
+                          <td className="py-2 text-indigo-400 font-bold text-indigo-400">TIMESTAMP</td>
+                          <td className="py-2">DEFAULT CURRENT_TIMESTAMP</td>
+                          <td className="py-2 text-gray-400">Acoustic request timestamp.</td>
+                        </tr>
+                      </>
+                    )}
+                    {selectedSqlTable === "payments" && (
+                      <>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">id</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-amber-500 font-bold font-bold">PRIMARY KEY</td>
+                          <td className="py-2 text-gray-400">Unique transaction ticket key.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">userId</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-blue-400 font-bold">FOREIGN KEY (users.uid)</td>
+                          <td className="py-2 text-gray-400">Submitter reference.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">userName</td>
+                          <td className="py-2 text-indigo-400 font-bold">VARCHAR(255)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The sender display name.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">userEmail</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(255)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400 font-mono text-gray-500">The sender email address.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">amount</td>
+                          <td className="py-2 text-indigo-400 font-bold">NUMERIC(10, 2)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The deposited amount (in PKR).</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">status</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(32)</td>
+                          <td className="py-2">DEFAULT 'pending'</td>
+                          <td className="py-2 text-gray-400">Manual verification state ('pending' | 'approved' | 'rejected').</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">createdAt</td>
+                          <td className="py-2 text-indigo-400">TIMESTAMP</td>
+                          <td className="py-2">DEFAULT CURRENT_TIMESTAMP</td>
+                          <td className="py-2 text-gray-400">Payment receipt submit timestamp.</td>
+                        </tr>
+                      </>
+                    )}
+                    {selectedSqlTable === "cloned_voices" && (
+                      <>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">id</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-amber-500 font-bold">PRIMARY KEY</td>
+                          <td className="py-2 text-gray-400">Unique vocal blueprint ID.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">userId</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(128)</td>
+                          <td className="py-2 text-blue-400 font-bold">FOREIGN KEY (users.uid)</td>
+                          <td className="py-2 text-gray-400">The voice clone owner's user key.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">name</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(255)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The custom clone display label.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">description</td>
+                          <td className="py-2 text-indigo-400 font-bold">TEXT</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">The vocal archetype context.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">gender</td>
+                          <td className="py-2 text-indigo-400">VARCHAR(32)</td>
+                          <td className="py-2">NOT NULL</td>
+                          <td className="py-2 text-gray-400">Gender classification ('Male' | 'Female' | 'Neutral').</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">pitch</td>
+                          <td className="py-2 text-indigo-400">FLOAT</td>
+                          <td className="py-2">DEFAULT 1.0</td>
+                          <td className="py-2 text-gray-400 font-bold">Pitch adjustment factor.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">speed</td>
+                          <td className="py-2 text-indigo-400 font-bold">FLOAT</td>
+                          <td className="py-2">DEFAULT 1.0</td>
+                          <td className="py-2 text-gray-400">Speed multiplier level.</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 text-[#00f0ff]">createdAt</td>
+                          <td className="py-2 text-indigo-400">TIMESTAMP</td>
+                          <td className="py-2">DEFAULT CURRENT_TIMESTAMP</td>
+                          <td className="py-2 text-gray-400">The registration date of the clone template.</td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Presets and Editor */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div className="lg:col-span-8 space-y-2">
+                <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-gray-500 block">SQL Command Prompt</span>
+                <div className="relative">
+                  <textarea
+                    value={sqlQuery}
+                    onChange={(e) => setSqlQuery(e.target.value)}
+                    placeholder="SELECT * FROM users;"
+                    className="w-full h-28 bg-black border border-white/10 rounded-xl p-4 font-mono text-xs text-white focus:border-[#00f0ff]/40 focus:outline-none"
+                  />
+                  <button
+                    onClick={executeSqlQuery}
+                    disabled={isExecutingSql || !sqlQuery}
+                    className="absolute right-3 bottom-3 px-3 py-1.5 rounded bg-[#00ff66]/10 border border-[#00ff66]/30 hover:bg-[#00ff66] hover:text-black text-xs font-mono font-bold text-[#00ff66] transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3 fill-current" />
+                    {isExecutingSql ? "Running..." : "Run Query"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="lg:col-span-4 space-y-2">
+                <span className="text-[9px] uppercase tracking-wider font-mono font-bold text-gray-500 block">Quick Queries Presets</span>
+                <div className="grid grid-cols-1 gap-1.5 font-mono">
+                  {[
+                    { label: "Fetch all users", query: "SELECT * FROM users;" },
+                    { label: "Fetch history logs", query: "SELECT * FROM history ORDER BY createdAt DESC;" },
+                    { label: "Fetch pending payments", query: "SELECT * FROM payments WHERE status = 'pending';" },
+                    { label: "Total Characters Used summary", query: "SELECT SUM(creditsUsed) FROM history;" },
+                    { label: "Fetch active cloned voices", query: "SELECT * FROM cloned_voices;" }
+                  ].map((preset, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setSqlQuery(preset.query);
+                        setSqlError(null);
+                        setSqlResult(null);
+                      }}
+                      className="p-2 rounded bg-white/[0.02] hover:bg-white/5 border border-white/5 hover:border-white/10 text-left text-[10px] font-mono text-gray-400 hover:text-[#00f0ff] truncate transition-colors cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Error state */}
+            {sqlError && (
+              <div className="p-3 bg-red-950/20 border border-red-500/10 text-red-400 rounded-xl font-mono text-xs flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 shrink-0" />
+                <span>{sqlError}</span>
+              </div>
+            )}
+
+            {/* Query result placeholder */}
+            {!sqlResult && !sqlError && !isExecutingSql && (
+              <div className="p-12 text-center bg-black/40 border border-white/5 rounded-xl flex flex-col items-center justify-center text-gray-500">
+                <Terminal className="w-8 h-8 text-gray-600 mb-2" />
+                <p className="text-xs font-mono text-gray-400">Terminal Idle.</p>
+                <p className="text-[10px] text-gray-500">Choose a query preset or write custom SELECT SQL above and run execution.</p>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {isExecutingSql && (
+              <div className="p-12 text-center bg-black/40 border border-white/5 rounded-xl flex flex-col items-center justify-center text-[#00f0ff] font-mono text-xs gap-2">
+                <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                <span>Running transaction audit on Cloud SQL indexes...</span>
+              </div>
+            )}
+
+            {/* Result table data */}
+            {sqlResult && (
+              <div className="space-y-2 font-mono">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-400">
+                    Query completed successfully: <b className="text-[#00ff66]">{sqlResult.rows.length}</b> rows returned.
+                  </span>
+                  <button
+                    onClick={() => {
+                      setSqlResult(null);
+                      setSqlQuery("");
+                    }}
+                    className="text-[9px] text-gray-500 hover:text-white cursor-pointer"
+                  >
+                    Clear Results
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto rounded-xl border border-white/5 bg-black custom-scrollbar">
+                  <table className="w-full text-left border-collapse text-[10px] font-mono">
+                    <thead>
+                      <tr className="bg-white/[0.02] border-b border-white/10 text-gray-400 uppercase text-[9px] tracking-wider">
+                        {sqlResult.columns.map((col) => (
+                          <th key={col} className="p-3 font-extrabold">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 text-gray-300">
+                      {sqlResult.rows.length === 0 ? (
+                        <tr>
+                          <td colSpan={sqlResult.columns.length} className="p-8 text-center text-gray-500 italic">
+                            Empty result set (0 rows returned).
+                          </td>
+                        </tr>
+                      ) : (
+                        sqlResult.rows.map((row, rIdx) => (
+                          <tr key={rIdx} className="hover:bg-white/[0.02] transition-colors">
+                            {sqlResult.columns.map((col) => {
+                              const value = row[col];
+                              let formattedValue = String(value ?? "NULL");
+                              
+                              const isCredits = col === "creditsUsed" || col === "credits" || col === "total_characters_used";
+                              const isAmount = col === "amount";
+                              const isEmail = col === "email" || col === "userEmail";
+                              
+                              return (
+                                <td key={col} className="p-3 font-mono">
+                                  {isCredits ? (
+                                    <span className="text-[#00f0ff] font-extrabold font-mono">
+                                      {typeof value === "number" ? value.toLocaleString() : value} Chars
+                                    </span>
+                                  ) : isAmount ? (
+                                    <span className="text-amber-400 font-extrabold">
+                                      PKR {typeof value === "number" ? value.toLocaleString() : value}
+                                    </span>
+                                  ) : isEmail ? (
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-white">{formattedValue}</span>
+                                      {(() => {
+                                        const dateVal = row.createdAt || row.lastActiveAt;
+                                        if (dateVal) {
+                                          const diffDays = Math.abs(new Date().getTime() - new Date(dateVal).getTime()) / (1000 * 60 * 60 * 24);
+                                          if (diffDays <= 2.5) {
+                                            return (
+                                              <span className="bg-[#00ff66]/10 text-[#00ff66] border border-[#00ff66]/20 text-[7px] px-1 rounded uppercase font-bold">
+                                                New
+                                              </span>
+                                            );
+                                          }
+                                        }
+                                        return null;
+                                      })()}
+                                    </div>
+                                  ) : (
+                                    <span className="truncate max-w-xs block font-mono" title={formattedValue}>
+                                      {formattedValue}
+                                    </span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Floating Screenshot expansion receipt viewer Modal */}

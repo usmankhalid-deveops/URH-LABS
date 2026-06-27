@@ -16,7 +16,7 @@ window.addEventListener('unhandledrejection', (event) => {
     message.includes('offline') || 
     message.includes('connection')
   ) {
-    console.warn("URH Labs: Suppressed benign connection event.", message);
+    console.warn("URH LABS: Suppressed benign connection event.", message);
     event.preventDefault(); // Prevents browser or framework-level error overlay
   }
 });
@@ -25,7 +25,7 @@ window.addEventListener('unhandledrejection', (event) => {
 window.addEventListener('error', (event) => {
   const message = event.message || "";
   if (message.includes('WebSocket') || message.includes('websocket')) {
-    console.warn("URH Labs: Suppressed benign WebSocket socket error.", message);
+    console.warn("URH LABS: Suppressed benign WebSocket socket error.", message);
     event.preventDefault();
   }
 }, true);

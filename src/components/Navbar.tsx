@@ -65,12 +65,33 @@ export default function Navbar({ user, onContactShortcut, isRealFirebase, onOpen
 
         {/* Credit Indicator Token */}
         {user && (
-          <div className="flex items-center gap-1.5 sm:gap-2 bg-gradient-to-r from-[#00f0ff]/10 to-[#00ff66]/5 pl-2 pr-3 sm:pl-3 sm:pr-4 py-1.5 rounded-full border border-[#00f0ff]/20 shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-[#00ff66] animate-spin-slow" />
-            <span className="text-[10px] sm:text-xs font-sans text-gray-300 font-medium">
-              {user.role === "admin" ? "∞ Admin" : `${user.credits.toLocaleString()} Ch`}
-            </span>
-          </div>
+          <>
+            <div className="hidden sm:flex flex-col text-right font-mono text-[10px] text-gray-400 shrink-0 border-r border-white/10 pr-4">
+              <div>
+                <span>Used: </span>
+                <span className="text-[#00ff66] font-bold">
+                  {Math.floor((user.usedDuration || 0) / 3600) > 0 ? `${Math.floor((user.usedDuration || 0) / 3600)}h ` : ""}
+                  {Math.floor(((user.usedDuration || 0) % 3600) / 60)}m {(user.usedDuration || 0) % 60}s
+                </span>
+              </div>
+              <div>
+                <span>Remaining: </span>
+                <span className="text-[#00f0ff] font-bold">
+                  {(() => {
+                    const rem = Math.max(0, (user.totalPackageDuration || 7200) - (user.usedDuration || 0));
+                    return `${Math.floor(rem / 3600) > 0 ? `${Math.floor(rem / 3600)}h ` : ""}${Math.floor((rem % 3600) / 60)}m ${rem % 60}s`;
+                  })()}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-gradient-to-r from-[#00f0ff]/10 to-[#00ff66]/5 pl-2 pr-3 sm:pl-3 sm:pr-4 py-1.5 rounded-full border border-[#00f0ff]/20 shrink-0">
+              <Sparkles className="w-3.5 h-3.5 text-[#00ff66] animate-spin-slow" />
+              <span className="text-[10px] sm:text-xs font-sans text-gray-300 font-medium">
+                {user.role === "admin" ? "∞ Admin" : `${user.credits.toLocaleString()} Ch`}
+              </span>
+            </div>
+          </>
         )}
       </div>
     </nav>

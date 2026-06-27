@@ -31,7 +31,7 @@ import {
   deleteDoc
 } from "firebase/firestore";
 import { UserProfile, HistoryItem, PaymentRequest, SubscriptionRecord, ClonedVoice } from "./types";
-import firebaseConfig from "./firebase-applet-config.json";
+import firebaseConfig from "../firebase-applet-config.json";
 
 // Operation types for standard error formatting
 export enum OperationType {
@@ -99,35 +99,35 @@ if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_A
     
     firebaseDb = dbId ? getFirestore(firebaseApp, dbId) : getFirestore(firebaseApp);
     isRealFirebase = true;
-    console.log(`URH Labs: Real Firebase services successfully initialized. Database ID: ${dbId || "(default)"}`);
+    console.log(`URH LABS: Real Firebase services successfully initialized. Database ID: ${dbId || "(default)"}`);
 
     // CRITICAL CONSTRAINT: Test Connection at Boot with self-healing offline trackers
     const testConnection = async () => {
       try {
-        await runWithTimeout(getDocFromServer(doc(firebaseDb, 'test', 'connection')), 2000);
+        await runWithTimeout(getDocFromServer(doc(firebaseDb, 'test', 'connection')), 10000);
         isFirebaseOffline = false;
-        console.log("URH Labs: Remote Firebase heartbeat check: ONLINE.");
+        console.log("URH LABS: Remote Firebase heartbeat check: ONLINE.");
       } catch (error: any) {
         // If the error message indicates a permission gate or structure issue rather than network, we ARE connected to Firebase!
         const errMsg = error?.message || String(error);
         const errCode = error?.code;
         if (errCode === 'permission-denied' || errMsg.includes('permission') || errMsg.includes('denied') || errMsg.includes('unauthorized')) {
           isFirebaseOffline = false;
-          console.log("URH Labs: Remote Firebase heartbeat check: ONLINE (Received authentic permission gate response).");
+          console.log("URH LABS: Remote Firebase heartbeat check: ONLINE (Received authentic permission gate response).");
         } else {
-          isFirebaseOffline = true;
-          console.warn("URH Labs: Remote Firebase client is OFFLINE or heartbeat timed out. Intercepting auth/db pipelines to route via seamless local simulation caches.", error);
+          isFirebaseOffline = false; // Keep it false to default to live operations
+          console.warn("URH LABS: Remote Firebase client heartbeat timed out or returned error, but we will still attempt live operations. Error:", error);
         }
       }
     };
     testConnection();
   } catch (err) {
     isFirebaseOffline = true;
-    console.error("URH Labs: Failed to initialize Firebase synchronously:", err);
+    console.error("URH LABS: Failed to initialize Firebase synchronously:", err);
   }
 } else {
   isFirebaseOffline = true;
-  console.log("URH Labs: Running in high-fidelity local simulation mode.");
+  console.log("URH LABS: Running in high-fidelity local simulation mode.");
 }
 
 // Unified Firestore error logging to preserve security rules context
@@ -228,6 +228,77 @@ export function isAdminEmail(email: string): boolean {
   );
 }
 
+export function getPackageDurationForPlan(plan: string): number {
+  const normalized = (plan || "").toLowerCase();
+  if (normalized.includes("11m")) {
+    return 100 * 3600; // 100 hours
+  } else if (normalized.includes("5m")) {
+    return 50 * 3600; // 50 hours
+  } else if (normalized.includes("3m")) {
+    return 24 * 3600; // 24 hours
+  } else if (normalized.includes("1m")) {
+    return 10 * 3600; // 10 hours
+  } else if (normalized.includes("admin")) {
+    return 1000 * 3600; // 1000 hours
+  } else {
+    return 2 * 3600; // 2 hours
+  }
+}
+
+export async function enrichAndSaveSession(profile: UserProfile): Promise<UserProfile> {
+  const nowStr = new Date().toISOString();
+  
+  // 1. Calculate values
+  const usedDuration = typeof profile.usedDuration === "number" ? profile.usedDuration : 0;
+  const lastSignInAt = nowStr;
+  const totalPackageDuration = typeof profile.totalPackageDuration === "number" && profile.totalPackageDuration > 0
+    ? profile.totalPackageDuration 
+    : getPackageDurationForPlan(profile.plan);
+
+  const enriched: UserProfile = {
+    ...profile,
+    usedDuration,
+    lastSignInAt,
+    totalPackageDuration
+  };
+
+  // 2. Persist to Firestore if real Firebase is online (Non-blocking background sync)
+  if (isRealFirebase && firebaseDb) {
+    (async () => {
+      try {
+        await runWithTimeout(updateDoc(doc(firebaseDb, "users", profile.uid), {
+          usedDuration,
+          lastSignInAt,
+          totalPackageDuration
+        }), 3000);
+      } catch (err) {
+        // If doc update failed (e.g. not created yet), setDoc instead
+        try {
+          await runWithTimeout(setDoc(doc(firebaseDb, "users", profile.uid), enriched, { merge: true }), 3000);
+        } catch (err2) {
+          console.warn(`URH LABS: Firestore enrich save failed for users/${profile.uid}:`, err2);
+        }
+      }
+    })().catch(err => console.warn("Background session sync skipped:", err));
+  }
+
+  // 3. Persist to LocalStorage fallback
+  const users = getLocalUsers();
+  if (users[profile.uid]) {
+    users[profile.uid] = {
+      ...users[profile.uid],
+      ...enriched
+    };
+    saveLocalUsers(users);
+  }
+
+  // 4. Save to Current User
+  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(enriched));
+  window.dispatchEvent(new Event("storage"));
+
+  return enriched;
+}
+
 // Initialize local database with some mocked user and history sample values if empty
 if (!localStorage.getItem(LOCAL_USERS_KEY)) {
   const seedUsers: Record<string, any> = {
@@ -307,10 +378,10 @@ if (!localStorage.getItem(LOCAL_HISTORY_KEY)) {
 
 // EXPORTED INTEGRATION SERVICES
 export const FirebaseIntegration = {
-  isRealFirebase: () => isRealFirebase && !isFirebaseOffline,
+  isRealFirebase: () => isRealFirebase,
 
   onAuthChanged: (callback: (user: any) => void) => {
-    if (isRealFirebase && !isFirebaseOffline && firebaseAuth) {
+    if (isRealFirebase && firebaseAuth) {
       return onAuthStateChanged(firebaseAuth, async (fbUser) => {
         if (fbUser) {
           // Fast-track: Immediately yield localized storage profile if it exists of matching UID
@@ -321,7 +392,27 @@ export const FirebaseIntegration = {
 
           try {
             // Retrieve profile with short timeout to prevent slow loading screens
-            const profile = await runWithTimeout(FirebaseIntegration.getUserProfile(fbUser.uid), 1000);
+            const profile = await runWithTimeout(FirebaseIntegration.getUserProfile(fbUser.uid), 3000);
+            
+            // Explicitly create user profile in Firestore if they are logging in for the first time
+            if (!profile && firebaseDb) {
+              const newProfile: UserProfile = {
+                uid: fbUser.uid,
+                name: fbUser.displayName || fbUser.email?.split("@")[0] || "User",
+                email: fbUser.email || "",
+                credits: 50000,
+                plan: "Free Plan",
+                role: "user",
+                createdAt: new Date().toISOString()
+              };
+              try {
+                await runWithTimeout(setDoc(doc(firebaseDb, "users", fbUser.uid), newProfile), 3000);
+                console.log(`URH LABS: Successfully saved new user profile users/${fbUser.uid} during auth state change.`);
+              } catch (writeErr) {
+                console.warn(`URH LABS: Failed to save user profile users/${fbUser.uid} on auth change:`, writeErr);
+              }
+            }
+
             const verifiedProfile = profile || {
               uid: fbUser.uid,
               name: fbUser.displayName || fbUser.email?.split("@")[0] || "User",
@@ -332,14 +423,38 @@ export const FirebaseIntegration = {
               createdAt: new Date().toISOString()
             };
             
-            // Mark user online in db and local lists
-            await FirebaseIntegration.updateUserStatus(verifiedProfile.uid, "online");
+            // Mark user online in db and local lists asynchronously (non-blocking)
+            FirebaseIntegration.updateUserStatus(verifiedProfile.uid, "online").catch(() => {});
             verifiedProfile.status = "online";
             verifiedProfile.lastActiveAt = new Date().toISOString();
             
             callback(verifiedProfile);
           } catch (profileErr) {
-            console.warn("URH Labs: Fast profile fetch timed out or failed. Preventing freeze.", profileErr);
+            console.warn("URH LABS: Fast profile fetch timed out or failed. Preventing freeze.", profileErr);
+            
+            // Background initialization fallback if first-time user fetch timed out
+            if (firebaseDb) {
+              (async () => {
+                try {
+                  const snap = await runWithTimeout(getDoc(doc(firebaseDb, "users", fbUser.uid)), 3000);
+                  if (!snap.exists()) {
+                    await runWithTimeout(setDoc(doc(firebaseDb, "users", fbUser.uid), {
+                      uid: fbUser.uid,
+                      name: fbUser.displayName || fbUser.email?.split("@")[0] || "User",
+                      email: fbUser.email || "",
+                      credits: 50000,
+                      plan: "Free Plan",
+                      role: "user",
+                      createdAt: new Date().toISOString()
+                    }), 3000);
+                    console.log(`URH LABS: Back-provisioned fallback profile for users/${fbUser.uid}`);
+                  }
+                } catch (fallbackErr) {
+                  console.warn("URH LABS: Background fallback provision failed:", fallbackErr);
+                }
+              })().catch(() => {});
+            }
+
             if (!cached || cached.uid !== fbUser.uid) {
               const fallback = {
                 uid: fbUser.uid,
@@ -426,14 +541,14 @@ export const FirebaseIntegration = {
       throw new Error("Access Denied: Invalid credentials for this designated admin account. Password must be 619131.");
     }
     
-    if (isRealFirebase && !isFirebaseOffline && firebaseAuth) {
+    if (isRealFirebase && firebaseAuth) {
       try {
-        const cred = await runWithTimeout(signInWithEmailAndPassword(firebaseAuth, trimmedEmail, password), 4000);
+        const cred = await runWithTimeout(signInWithEmailAndPassword(firebaseAuth, trimmedEmail, password), 10000);
         let profile: UserProfile | null = null;
         try {
-          profile = await runWithTimeout(FirebaseIntegration.getUserProfile(cred.user.uid), 2000);
+          profile = await runWithTimeout(FirebaseIntegration.getUserProfile(cred.user.uid), 3000);
         } catch (profileErr) {
-          console.warn("URH Labs: Failed to read user profile from Firestore during login:", profileErr);
+          console.warn("URH LABS: Failed to read user profile from Firestore during login:", profileErr);
         }
 
         const finalRole = isUserAdmin ? "admin" : "user";
@@ -454,11 +569,19 @@ export const FirebaseIntegration = {
           finalProfile.role = "user";
         }
 
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(finalProfile));
-        window.dispatchEvent(new Event("storage"));
-        return finalProfile;
+        // Direct write of brand new user profile to Firestore database
+        if (!profile && firebaseDb) {
+          try {
+            await runWithTimeout(setDoc(doc(firebaseDb, "users", cred.user.uid), finalProfile), 3000);
+            console.log(`URH LABS: Successfully saved new user profile users/${cred.user.uid} during login.`);
+          } catch (writeErr) {
+            console.warn(`URH LABS: Direct profile write failed during login:`, writeErr);
+          }
+        }
+
+        return await enrichAndSaveSession(finalProfile);
       } catch (err: any) {
-        console.warn("URH Labs: Real Firebase login failed or timed out. Triggering resilient simulation mode login...", err);
+        console.warn("URH LABS: Real Firebase login failed or timed out. Triggering resilient simulation mode login...", err);
         // Fallback to check local simulated data, or auto-provision if credentials match evaluation settings
         const users = getLocalUsers();
         const matchedUid = Object.keys(users).find(
@@ -473,11 +596,12 @@ export const FirebaseIntegration = {
             credits: users[matchedUid].credits,
             plan: users[matchedUid].plan,
             role: isUserAdmin ? "admin" : "user", // Strict enforcement
-            createdAt: users[matchedUid].createdAt
+            createdAt: users[matchedUid].createdAt,
+            usedDuration: users[matchedUid].usedDuration,
+            lastSignInAt: users[matchedUid].lastSignInAt,
+            totalPackageDuration: users[matchedUid].totalPackageDuration
           };
-          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-          window.dispatchEvent(new Event("storage"));
-          return profile;
+          return await enrichAndSaveSession(profile);
         }
 
         // If 'password123' (evaluation credentials) or common emails are being logged in, auto-create to completely bypass the blocker
@@ -501,9 +625,7 @@ export const FirebaseIntegration = {
           };
           saveLocalUsers(users);
 
-          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-          window.dispatchEvent(new Event("storage"));
-          return profile;
+          return await enrichAndSaveSession(profile);
         }
 
         throw err;
@@ -537,9 +659,7 @@ export const FirebaseIntegration = {
           };
           saveLocalUsers(users);
 
-          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-          window.dispatchEvent(new Event("storage"));
-          return profile;
+          return await enrichAndSaveSession(profile);
         }
         throw new Error("Invalid email or password.");
       }
@@ -551,17 +671,18 @@ export const FirebaseIntegration = {
         credits: users[matchedUid].credits,
         plan: users[matchedUid].plan,
         role: isUserAdmin ? "admin" : "user", // Strict enforcement
-        createdAt: users[matchedUid].createdAt
+        createdAt: users[matchedUid].createdAt,
+        usedDuration: users[matchedUid].usedDuration,
+        lastSignInAt: users[matchedUid].lastSignInAt,
+        totalPackageDuration: users[matchedUid].totalPackageDuration
       };
       
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-      window.dispatchEvent(new Event("storage"));
-      return profile;
+      return await enrichAndSaveSession(profile);
     }
   },
 
   loginWithGoogle: async (): Promise<UserProfile> => {
-    if (isRealFirebase && !isFirebaseOffline && firebaseAuth) {
+    if (isRealFirebase && firebaseAuth) {
       try {
         const provider = new GoogleAuthProvider();
         provider.setCustomParameters({ prompt: "select_account" });
@@ -574,7 +695,7 @@ export const FirebaseIntegration = {
         try {
           profile = await runWithTimeout(FirebaseIntegration.getUserProfile(cred.user.uid), 2000);
         } catch (profileErr) {
-          console.warn("URH Labs: Failed to read user profile from Firestore during Google login:", profileErr);
+          console.warn("URH LABS: Failed to read user profile from Firestore during Google login:", profileErr);
         }
 
         const isUserAdmin = isAdminEmail(trimmedEmail);
@@ -600,15 +721,13 @@ export const FirebaseIntegration = {
           try {
             await setDoc(doc(firebaseDb, "users", cred.user.uid), finalProfile);
           } catch (err) {
-            console.warn(`URH Labs: Failed to seed user users/${cred.user.uid} to Firestore during Google Login:`, err);
+            console.warn(`URH LABS: Failed to seed user users/${cred.user.uid} to Firestore during Google Login:`, err);
           }
         }
 
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(finalProfile));
-        window.dispatchEvent(new Event("storage"));
-        return finalProfile;
+        return await enrichAndSaveSession(finalProfile);
       } catch (err: any) {
-        console.error("URH Labs: Real Google sign-in failed.", err);
+        console.error("URH LABS: Real Google sign-in failed.", err);
         
         // Self-healing check for a missing authorized domain in Firebase Console.
         const errCode = err?.code;
@@ -617,7 +736,7 @@ export const FirebaseIntegration = {
           const currentHost = window.location.hostname;
           alert(`Google Authentication Configuration Alert:\n\nThis web domain (${currentOrigin}) is not added to your Firebase project's Authorized Domains list.\n\nTo fix this:\n1. Open your Firebase Console (https://console.firebase.google.com/)\n2. Navigate to Authentication -> Settings -> Authorized Domains\n3. Click "Add domain" and add "${currentHost}"\n\nReturning simulation mode user profile so you can continue testing the application layout.`);
         } else if (errCode === 'auth/popup-closed-by-user') {
-          console.warn("URH Labs: Google sign-in popup was closed by user.");
+          console.warn("URH LABS: Google sign-in popup was closed by user.");
         } else {
           alert(`Google SSO issue standard details: ${err?.message || String(err)}`);
         }
@@ -652,12 +771,13 @@ export const FirebaseIntegration = {
           credits: profile.credits,
           plan: profile.plan,
           role: profile.role,
-          createdAt: profile.createdAt
+          createdAt: profile.createdAt,
+          usedDuration: profile.usedDuration,
+          lastSignInAt: profile.lastSignInAt,
+          totalPackageDuration: profile.totalPackageDuration
         };
 
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(clientProfile));
-        window.dispatchEvent(new Event("storage"));
-        return clientProfile;
+        return await enrichAndSaveSession(clientProfile);
       }
     } else {
       // High-fidelity local simulation mode
@@ -690,12 +810,13 @@ export const FirebaseIntegration = {
         credits: profile.credits,
         plan: profile.plan,
         role: profile.role,
-        createdAt: profile.createdAt
+        createdAt: profile.createdAt,
+        usedDuration: profile.usedDuration,
+        lastSignInAt: profile.lastSignInAt,
+        totalPackageDuration: profile.totalPackageDuration
       };
 
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(clientProfile));
-      window.dispatchEvent(new Event("storage"));
-      return clientProfile;
+      return await enrichAndSaveSession(clientProfile);
     }
   },
 
@@ -707,9 +828,9 @@ export const FirebaseIntegration = {
     const initialPlan = "Free Plan";
     const initialCredits = finalRole === "admin" ? 10000000 : 50000;
 
-    if (isRealFirebase && !isFirebaseOffline && firebaseAuth && firebaseDb) {
+    if (isRealFirebase && firebaseAuth && firebaseDb) {
       try {
-        const cred = await runWithTimeout(createUserWithEmailAndPassword(firebaseAuth, trimmedEmail, password), 4000);
+        const cred = await runWithTimeout(createUserWithEmailAndPassword(firebaseAuth, trimmedEmail, password), 10000);
         const profile: UserProfile = {
           uid: cred.user.uid,
           name: cleanName,
@@ -719,16 +840,19 @@ export const FirebaseIntegration = {
           role: finalRole,
           createdAt: new Date().toISOString()
         };
+        
+        // Save profile synchronously to guarantee it exists in Firestore before completing registration
         try {
-          await setDoc(doc(firebaseDb, "users", cred.user.uid), profile);
+          await runWithTimeout(setDoc(doc(firebaseDb, "users", cred.user.uid), profile), 6000);
+          console.log(`URH LABS: Successfully saved user profile users/${cred.user.uid} directly in Firestore.`);
         } catch (err) {
-          console.warn(`URH Labs: Failed to write doc users/${cred.user.uid} to Firestore. Proceeding cleanly with LocalStorage-backed fallback profile.`, err);
+          console.warn(`URH LABS: Synchronous setDoc failed, attempting simple direct write:`, err);
+          await setDoc(doc(firebaseDb, "users", cred.user.uid), profile);
         }
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-        window.dispatchEvent(new Event("storage"));
-        return profile;
+        
+        return await enrichAndSaveSession(profile);
       } catch (err: any) {
-        console.warn("URH Labs: Real Firebase registration failed or timed out. Triggering resilient simulation mode registration...", err);
+        console.warn("URH LABS: Real Firebase registration failed or timed out. Triggering resilient simulation mode registration...", err);
         // Fallback to local simulated registration
         const users = getLocalUsers();
         const alreadyExists = Object.values(users).some(
@@ -748,11 +872,12 @@ export const FirebaseIntegration = {
               credits: users[matchedUid].credits,
               plan: users[matchedUid].plan,
               role: users[matchedUid].role,
-              createdAt: users[matchedUid].createdAt
+              createdAt: users[matchedUid].createdAt,
+              usedDuration: users[matchedUid].usedDuration,
+              lastSignInAt: users[matchedUid].lastSignInAt,
+              totalPackageDuration: users[matchedUid].totalPackageDuration
             };
-            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-            window.dispatchEvent(new Event("storage"));
-            return profile;
+            return await enrichAndSaveSession(profile);
           }
           throw new Error("Email is already registered.");
         }
@@ -774,9 +899,7 @@ export const FirebaseIntegration = {
         };
         
         saveLocalUsers(users);
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-        window.dispatchEvent(new Event("storage"));
-        return profile;
+        return await enrichAndSaveSession(profile);
       }
     } else {
       // Emulated
@@ -798,11 +921,12 @@ export const FirebaseIntegration = {
             credits: users[matchedUid].credits,
             plan: users[matchedUid].plan,
             role: users[matchedUid].role,
-            createdAt: users[matchedUid].createdAt
+            createdAt: users[matchedUid].createdAt,
+            usedDuration: users[matchedUid].usedDuration,
+            lastSignInAt: users[matchedUid].lastSignInAt,
+            totalPackageDuration: users[matchedUid].totalPackageDuration
           };
-          localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-          window.dispatchEvent(new Event("storage"));
-          return profile;
+          return await enrichAndSaveSession(profile);
         }
         throw new Error("Email is already registered.");
       }
@@ -824,9 +948,7 @@ export const FirebaseIntegration = {
       };
       
       saveLocalUsers(users);
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(profile));
-      window.dispatchEvent(new Event("storage"));
-      return profile;
+      return await enrichAndSaveSession(profile);
     }
   },
 
@@ -840,28 +962,28 @@ export const FirebaseIntegration = {
     // Async update offline status to Firestore so we don't block the frontend
     if (current) {
       FirebaseIntegration.updateUserStatus(current.uid, "offline").catch((e) => {
-        console.warn("URH Labs: Failed to set status to offline during logout:", e);
+        console.warn("URH LABS: Failed to set status to offline during logout:", e);
       });
     }
 
     try {
       if (isRealFirebase && firebaseAuth) {
         await runWithTimeout(signOut(firebaseAuth), 1500).catch((e) => {
-          console.warn("URH Labs: signOut timed out or failed:", e);
+          console.warn("URH LABS: signOut timed out or failed:", e);
         });
       }
     } catch (e) {
-      console.warn("URH Labs: Failed to sign out of Firebase auth:", e);
+      console.warn("URH LABS: Failed to sign out of Firebase auth:", e);
     }
   },
 
   getUserProfile: async (uid: string): Promise<UserProfile | null> => {
     if (isRealFirebase && firebaseDb) {
       try {
-        const snap = await runWithTimeout(getDoc(doc(firebaseDb, "users", uid)), 1000);
+        const snap = await runWithTimeout(getDoc(doc(firebaseDb, "users", uid)), 3000);
         return snap.exists() ? (snap.data() as UserProfile) : null;
       } catch (err) {
-        console.warn(`URH Labs: Failed to read doc users/${uid} from remote Firestore. Falling back to LocalStorage cache.`, err);
+        console.warn(`URH LABS: Failed to read doc users/${uid} from remote Firestore. Falling back to LocalStorage cache.`, err);
         const users = getLocalUsers();
         return users[uid] || null;
       }
@@ -874,18 +996,20 @@ export const FirebaseIntegration = {
   updateUserStatus: async (uid: string, status: "online" | "offline"): Promise<void> => {
     const lastActiveAt = new Date().toISOString();
     
-    // 1. Remote Firestore
+    // 1. Remote Firestore (Non-blocking background sync)
     if (isRealFirebase && firebaseDb) {
-      try {
-        await updateDoc(doc(firebaseDb, "users", uid), { status, lastActiveAt });
-      } catch (err) {
-        // Fallback: setDoc if doc doesn't exist
+      (async () => {
         try {
-          await setDoc(doc(firebaseDb, "users", uid), { status, lastActiveAt }, { merge: true });
-        } catch (subErr) {
-          console.warn(`URH Labs: Failed to update status for users/${uid}:`, subErr);
+          await runWithTimeout(updateDoc(doc(firebaseDb, "users", uid), { status, lastActiveAt }), 3000);
+        } catch (err) {
+          // Fallback: setDoc if doc doesn't exist
+          try {
+            await runWithTimeout(setDoc(doc(firebaseDb, "users", uid), { status, lastActiveAt }, { merge: true }), 3000);
+          } catch (subErr) {
+            console.warn(`URH LABS: Failed to update status for users/${uid}:`, subErr);
+          }
         }
-      }
+      })().catch(() => {});
     }
 
     // 2. Local Storage Lists
@@ -921,7 +1045,7 @@ export const FirebaseIntegration = {
         }
         await updateDoc(doc(firebaseDb, "users", uid), { offeredPlans });
       } catch (err) {
-        console.warn(`URH Labs: Failed to offer plan to users/${uid}:`, err);
+        console.warn(`URH LABS: Failed to offer plan to users/${uid}:`, err);
       }
     }
 
@@ -967,7 +1091,7 @@ export const FirebaseIntegration = {
           offeredPlans
         });
       } catch (err) {
-        console.warn(`URH Labs: Failed to accept plan offer in Firestore:`, err);
+        console.warn(`URH LABS: Failed to accept plan offer in Firestore:`, err);
       }
     }
 
@@ -997,9 +1121,9 @@ export const FirebaseIntegration = {
       const updateData: any = { credits };
       if (plan) updateData.plan = plan;
       try {
-        await updateDoc(doc(firebaseDb, "users", uid), updateData);
+        await setDoc(doc(firebaseDb, "users", uid), updateData, { merge: true });
       } catch (err) {
-        console.warn(`URH Labs: Firestore credits update failed for users/${uid}:`, err);
+        console.warn(`URH LABS: Firestore credits update failed for users/${uid}:`, err);
       }
     }
 
@@ -1054,7 +1178,7 @@ export const FirebaseIntegration = {
       try {
         await setDoc(doc(firebaseDb, `users/${userId}/history`, id), item);
       } catch (err) {
-        console.warn(`URH Labs: Failed to write history item users/${userId}/history/${id}:`, err);
+        console.warn(`URH LABS: Failed to write history item users/${userId}/history/${id}:`, err);
       }
     }
     return item;
@@ -1063,12 +1187,12 @@ export const FirebaseIntegration = {
   getUserHistory: async (userId: string): Promise<HistoryItem[]> => {
     if (isRealFirebase && firebaseDb) {
       try {
-        const snap = await runWithTimeout(getDocs(collection(firebaseDb, `users/${userId}/history`)), 1000);
+        const snap = await runWithTimeout(getDocs(collection(firebaseDb, `users/${userId}/history`)), 3000);
         const res: HistoryItem[] = [];
         snap.forEach((doc) => res.push(doc.data() as HistoryItem));
         return res.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       } catch (err) {
-        console.warn(`URH Labs: Failed to load user history from remote Firestore. Falling back to local cache.`, err);
+        console.warn(`URH LABS: Failed to load user history from remote Firestore. Falling back to local cache.`, err);
         const list = getLocalHistory();
         return list.filter(item => item.userId === userId);
       }
@@ -1100,7 +1224,7 @@ export const FirebaseIntegration = {
       try {
         await setDoc(doc(firebaseDb, "payment_requests", id), reqItem);
       } catch (err) {
-        console.warn(`URH Labs: Failed to write payment request users/${userId}/payments/${id}:`, err);
+        console.warn(`URH LABS: Failed to write payment request users/${userId}/payments/${id}:`, err);
       }
     }
 
@@ -1113,7 +1237,7 @@ export const FirebaseIntegration = {
         // Trigger storage event to synchronize client side states immediately
         window.dispatchEvent(new Event("storage"));
       } catch (verifyErr) {
-        console.warn("URH Labs: Automated system verification failed/deferred", verifyErr);
+        console.warn("URH LABS: Automated system verification failed/deferred", verifyErr);
       }
     }, 2500);
 
@@ -1128,7 +1252,7 @@ export const FirebaseIntegration = {
         snap.forEach((doc) => res.push(doc.data() as PaymentRequest));
         return res.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       } catch (err) {
-        console.warn("URH Labs: Failed to retrieve payments from remote Firestore. Falling back to local cache:", err);
+        console.warn("URH LABS: Failed to retrieve payments from remote Firestore. Falling back to local cache:", err);
         return getLocalPayments();
       }
     } else {
@@ -1142,7 +1266,7 @@ export const FirebaseIntegration = {
       try {
         await updateDoc(doc(firebaseDb, "payment_requests", requestId), { status });
       } catch (err) {
-        console.warn(`URH Labs: Failed to write payment status update for ${requestId} to Firestore:`, err);
+        console.warn(`URH LABS: Failed to write payment status update for ${requestId} to Firestore:`, err);
       }
     }
 
@@ -1159,7 +1283,7 @@ export const FirebaseIntegration = {
         try {
           userProf = await FirebaseIntegration.getUserProfile(req.userId);
         } catch (ue) {
-          console.warn("URH Labs: Failed profile retrieval on approve, seeking cache fallback", ue);
+          console.warn("URH LABS: Failed profile retrieval on approve, seeking cache fallback", ue);
         }
 
         if (userProf) {
@@ -1184,7 +1308,7 @@ export const FirebaseIntegration = {
         snap.forEach((doc) => res.push(doc.data() as UserProfile));
         return res;
       } catch (err) {
-        console.warn("URH Labs: Failed to read users from Firestore, using LocalStorage list fallback:", err);
+        console.warn("URH LABS: Failed to read users from Firestore, using LocalStorage list fallback:", err);
         const usersMap = getLocalUsers();
         return Object.values(usersMap).map((u) => {
           const { passwordHash, ...rest } = u;
@@ -1200,15 +1324,38 @@ export const FirebaseIntegration = {
     }
   },
 
+  getAllHistory: async (): Promise<HistoryItem[]> => {
+    if (isRealFirebase && firebaseDb) {
+      try {
+        const users = await FirebaseIntegration.getAllUsers();
+        const promises = users.map(async (u) => {
+          try {
+            return await FirebaseIntegration.getUserHistory(u.uid);
+          } catch (e) {
+            return [];
+          }
+        });
+        const results = await Promise.all(promises);
+        const all = results.flat();
+        return all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      } catch (err) {
+        console.warn("URH LABS: Failed to fetch all histories from Firestore, using LocalStorage fallback:", err);
+        return getLocalHistory().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
+    } else {
+      return getLocalHistory().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+  },
+
   manuallyAdjustUserCredits: async (uid: string, amount: number, plan?: string): Promise<void> => {
     // Both real and simulated to lock synchronized local & remote state structures
     if (isRealFirebase && firebaseDb) {
       const updateData: any = { credits: amount };
       if (plan) updateData.plan = plan;
       try {
-        await updateDoc(doc(firebaseDb, "users", uid), updateData);
+        await setDoc(doc(firebaseDb, "users", uid), updateData, { merge: true });
       } catch (err) {
-        console.warn(`URH Labs: Failed to save manual credits adjusted target to users/${uid}:`, err);
+        console.warn(`URH LABS: Failed to save manual credits adjusted target to users/${uid}:`, err);
       }
     }
 
@@ -1229,11 +1376,14 @@ export const FirebaseIntegration = {
 
   updateUserProfileName: async (uid: string, name: string): Promise<void> => {
     if (isRealFirebase && firebaseDb) {
-      try {
-        await updateDoc(doc(firebaseDb, "users", uid), { name });
-      } catch (err) {
-        console.warn(`URH Labs: Failed to save name modification to users/${uid}:`, err);
-      }
+      // Background non-blocking fire-and-forget save to Firestore
+      (async () => {
+        try {
+          await setDoc(doc(firebaseDb, "users", uid), { name }, { merge: true });
+        } catch (err) {
+          console.warn(`URH LABS: Failed to save name modification to users/${uid}:`, err);
+        }
+      })();
     }
 
     const users = getLocalUsers();
@@ -1250,24 +1400,66 @@ export const FirebaseIntegration = {
     }
   },
 
+  updateUserDuration: async (uid: string, usedDuration: number, lastSignInAt: string, totalPackageDuration: number): Promise<void> => {
+    // 1. Remote Firestore
+    if (isRealFirebase && firebaseDb) {
+      try {
+        await setDoc(doc(firebaseDb, "users", uid), {
+          usedDuration,
+          lastSignInAt,
+          totalPackageDuration
+        }, { merge: true });
+      } catch (err) {
+        console.warn(`URH LABS: Failed to update duration for users/${uid}:`, err);
+      }
+    }
+
+    // 2. Local storage
+    const users = getLocalUsers();
+    if (users[uid]) {
+      users[uid].usedDuration = usedDuration;
+      users[uid].lastSignInAt = lastSignInAt;
+      users[uid].totalPackageDuration = totalPackageDuration;
+      saveLocalUsers(users);
+    }
+
+    // 3. Current user context sync
+    const current = FirebaseIntegration.getCurrentUser();
+    if (current && current.uid === uid) {
+      const updated = {
+        ...current,
+        usedDuration,
+        lastSignInAt,
+        totalPackageDuration
+      };
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updated));
+      window.dispatchEvent(new Event("storage"));
+    }
+  },
+
   getUserClonedVoices: async (userId: string): Promise<ClonedVoice[]> => {
+    const localList = getLocalClones().filter(voice => voice.userId === userId);
     if (isRealFirebase && firebaseDb) {
       const path = `users/${userId}/cloned_voices`;
       try {
-        const snap = await runWithTimeout(getDocs(collection(firebaseDb, path)), 2000);
-        const res: ClonedVoice[] = [];
+        const snap = await runWithTimeout(getDocs(collection(firebaseDb, path)), 3000);
+        const remoteRes: ClonedVoice[] = [];
         snap.forEach((doc) => {
-          res.push(doc.data() as ClonedVoice);
+          remoteRes.push(doc.data() as ClonedVoice);
         });
-        return res.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        
+        // Merge local and remote list to ensure newly saved clones display instantly
+        const mergedMap = new Map<string, ClonedVoice>();
+        localList.forEach(v => mergedMap.set(v.id, v));
+        remoteRes.forEach(v => mergedMap.set(v.id, v));
+        
+        return Array.from(mergedMap.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       } catch (err: any) {
-        console.warn(`URH Labs: Failed to scan cloned voices on Firestore:`, err);
-        const list = getLocalClones();
-        return list.filter(voice => voice.userId === userId);
+        console.warn(`URH LABS: Failed to scan cloned voices on Firestore:`, err);
+        return localList;
       }
     } else {
-      const list = getLocalClones();
-      return list.filter(voice => voice.userId === userId);
+      return localList;
     }
   },
 
@@ -1286,12 +1478,14 @@ export const FirebaseIntegration = {
     saveLocalClones(list);
 
     if (isRealFirebase && firebaseDb) {
-      const path = `users/${userId}/cloned_voices/${id}`;
-      try {
-        await setDoc(doc(firebaseDb, `users/${userId}/cloned_voices`, id), item);
-      } catch (err: any) {
-        console.warn(`URH Labs: Failed to write cloned voice users/${userId}/cloned_voices/${id}:`, err);
-      }
+      // Background non-blocking fire-and-forget save to Firestore
+      (async () => {
+        try {
+          await setDoc(doc(firebaseDb, `users/${userId}/cloned_voices`, id), item);
+        } catch (err: any) {
+          console.warn(`URH LABS: Failed to write cloned voice users/${userId}/cloned_voices/${id}:`, err);
+        }
+      })();
     }
     return item;
   },
@@ -1307,7 +1501,7 @@ export const FirebaseIntegration = {
       try {
         await deleteDoc(doc(firebaseDb, `users/${userId}/cloned_voices`, voiceId));
       } catch (err: any) {
-        console.warn(`URH Labs: Failed to delete cloned voice on Firestore users/${userId}/cloned_voices/${voiceId}:`, err);
+        console.warn(`URH LABS: Failed to delete cloned voice on Firestore users/${userId}/cloned_voices/${voiceId}:`, err);
       }
     }
   }
