@@ -26,6 +26,91 @@ import {
 import { UserProfile, HistoryItem, ActivePage, ClonedVoice } from "../types";
 import { FirebaseIntegration } from "../firebase";
 
+// High-fidelity client-side voice synthesis via CORS-free proxy buffers.
+// Splits the text into safe chunks, fetches actual speech audio blocks, and merges them byte-for-byte.
+async function generateSpeechClientSide(text: string, lang: string): Promise<string> {
+  const maxChunk = 160;
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const chunks: string[] = [];
+  let currentChunk = "";
+
+  for (const word of words) {
+    if ((currentChunk + " " + word).length > maxChunk) {
+      if (currentChunk.trim()) {
+        chunks.push(currentChunk.trim());
+      }
+      currentChunk = word;
+    } else {
+      currentChunk = currentChunk ? (currentChunk + " " + word) : word;
+    }
+  }
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+
+  if (chunks.length === 0) {
+    chunks.push("No input text provided.");
+  }
+
+  const buffers: ArrayBuffer[] = [];
+  for (const chunk of chunks) {
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
+    
+    let success = false;
+    // Multi-tier backup proxies to ensure maximum reliability and prevent rate limit/failure locks
+    const proxyUrls = [
+      `https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`
+    ];
+
+    for (const proxyUrl of proxyUrls) {
+      try {
+        const res = await fetch(proxyUrl);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 100) {
+            buffers.push(buf);
+            success = true;
+            break;
+          }
+        }
+      } catch (e) {
+        console.warn(`CORS proxy failed: ${proxyUrl}`, e);
+      }
+    }
+
+    if (!success) {
+      console.warn(`Could not fetch TTS chunk client-side, trying direct fetch as last resort`);
+      try {
+        const res = await fetch(ttsUrl);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          buffers.push(buf);
+          success = true;
+        }
+      } catch (e) {
+        console.error(`Direct fetch also failed for chunk: "${chunk}"`, e);
+      }
+    }
+  }
+
+  if (buffers.length === 0) {
+    throw new Error("All client-side TTS fetches failed.");
+  }
+
+  // Concatenate all MP3 ArrayBuffers into a single unified play and download stream
+  const totalLength = buffers.reduce((acc, buf) => acc + buf.byteLength, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const buf of buffers) {
+    combined.set(new Uint8Array(buf), offset);
+    offset += buf.byteLength;
+  }
+
+  const finalBlob = new Blob([combined.buffer], { type: "audio/mpeg" });
+  return URL.createObjectURL(finalBlob);
+}
+
 // Formant voice synthesizer: Converts input script script text into high-fidelity downloadable vocal wav PCM samples client-side.
 function generateSpeechWav(
   text: string, 
@@ -427,7 +512,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
   };
 
   // Handle audio tag playback failure when server-side proxies are offline (e.g., on Vercel)
-  const handleAudioPlaybackError = () => {
+  const handleAudioPlaybackError = async () => {
     if (synthesizedAudioUrl && (synthesizedAudioUrl.startsWith("/api/") || synthesizedAudioUrl.includes("proxy-tts"))) {
       console.warn("URH LABS: Server-side audio proxy is offline (typical on Vercel). Generating high-fidelity vocal PCM wave client-side as fallback.");
       const textToUse = activePage === "text-to-speech" ? textToSpeechInput : (activePage === "voice-conversion" ? conversionInputText : "Welcome to URH LABS voice design studio.");
@@ -436,12 +521,21 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
       const speed = matchedVoice ? matchedVoice.speed : 1.0;
       const gender = matchedVoice ? matchedVoice.gender : "Male";
       const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
+      const lang = getVoiceLocale(activePage === "voice-conversion" ? conversionTarget : selectedVoice);
+      
       try {
-        const clientWavUrl = generateSpeechWav(textToUse || "No text content detected.", pitch, speed, gender, archetype);
-        setIsFallbackAudio(true);
-        setSynthesizedAudioUrl(clientWavUrl);
+        const clientUrl = await generateSpeechClientSide(textToUse || "No text content detected.", lang);
+        setIsFallbackAudio(false);
+        setSynthesizedAudioUrl(clientUrl);
       } catch (err) {
-        console.error("URH LABS: Failed client-side Wav synthesize fallback:", err);
+        console.warn("URH LABS: Client-side CORS synthesis proxy failed, fallback to local formant wave oscillator:", err);
+        try {
+          const clientWavUrl = generateSpeechWav(textToUse || "No text content detected.", pitch, speed, gender, archetype);
+          setIsFallbackAudio(true);
+          setSynthesizedAudioUrl(clientWavUrl);
+        } catch (innerErr) {
+          console.error("URH LABS: Failed client-side Wav synthesize fallback:", innerErr);
+        }
       }
     }
   };
@@ -741,9 +835,17 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             const speed = matchedVoice ? matchedVoice.speed : 1.0;
             const gender = matchedVoice ? matchedVoice.gender : "Male";
             const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
-            const wavUrl = generateSpeechWav(textToSpeechInput, pitch, speed, gender, archetype);
-            setIsFallbackAudio(true);
-            setSynthesizedAudioUrl(wavUrl);
+            const lang = getVoiceLocale(selectedVoice);
+            try {
+              const clientUrl = await generateSpeechClientSide(textToSpeechInput || "No input text provided.", lang);
+              setIsFallbackAudio(false);
+              setSynthesizedAudioUrl(clientUrl);
+            } catch (err) {
+              console.warn("URH LABS: Client-side CORS speech synthesis failed, falling back to local oscillator:", err);
+              const wavUrl = generateSpeechWav(textToSpeechInput, pitch, speed, gender, archetype);
+              setIsFallbackAudio(true);
+              setSynthesizedAudioUrl(wavUrl);
+            }
           }
         } else if (activePage === "voice-conversion") {
           try {
@@ -776,9 +878,17 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             const speed = matchedVoice ? matchedVoice.speed : 1.0;
             const gender = matchedVoice ? matchedVoice.gender : "Male";
             const archetype = matchedVoice ? (matchedVoice.archetype || "") : "";
-            const wavUrl = generateSpeechWav(conversionInputText, pitch, speed, gender, archetype);
-            setIsFallbackAudio(true);
-            setSynthesizedAudioUrl(wavUrl);
+            const lang = getVoiceLocale(conversionTarget);
+            try {
+              const clientUrl = await generateSpeechClientSide(conversionInputText || "No voice conversion script content detected.", lang);
+              setIsFallbackAudio(false);
+              setSynthesizedAudioUrl(clientUrl);
+            } catch (err) {
+              console.warn("URH LABS: Client-side CORS speech synthesis failed for conversion, falling back to local oscillator:", err);
+              const wavUrl = generateSpeechWav(conversionInputText, pitch, speed, gender, archetype);
+              setIsFallbackAudio(true);
+              setSynthesizedAudioUrl(wavUrl);
+            }
           }
         } else if (activePage === "voice-cloning") {
           try {
