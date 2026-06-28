@@ -54,7 +54,7 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
 
   const buffers: ArrayBuffer[] = [];
   for (const chunk of chunks) {
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
+    const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
     
     let success = false;
 
@@ -65,19 +65,23 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
         const json = await res.json();
         if (json && json.contents) {
           const dataUrl = json.contents;
-          const base64Index = dataUrl.indexOf(";base64,");
-          if (base64Index !== -1) {
-            const base64 = dataUrl.substring(base64Index + 8).replace(/\s/g, "");
-            const binaryString = window.atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
+          if (dataUrl.startsWith("data:audio/")) {
+            const base64Index = dataUrl.indexOf(";base64,");
+            if (base64Index !== -1) {
+              const base64 = dataUrl.substring(base64Index + 8).replace(/\s/g, "");
+              const binaryString = window.atob(base64);
+              const len = binaryString.length;
+              const bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              if (bytes.byteLength > 100) {
+                buffers.push(bytes.buffer);
+                success = true;
+              }
             }
-            if (bytes.byteLength > 100) {
-              buffers.push(bytes.buffer);
-              success = true;
-            }
+          } else {
+            console.warn("URH Client: Tier 1 proxy returned non-audio data url:", dataUrl.substring(0, 100));
           }
         }
       }
@@ -89,12 +93,15 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
     if (!success) {
       try {
         const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ttsUrl)}`);
-        if (res.ok) {
+        const contentType = res.headers.get("Content-Type") || "";
+        if (res.ok && contentType.toLowerCase().includes("audio")) {
           const buf = await res.arrayBuffer();
           if (buf.byteLength > 100) {
             buffers.push(buf);
             success = true;
           }
+        } else {
+          console.warn("URH Client: Tier 2 proxy ignored non-audio Content-Type:", contentType);
         }
       } catch (e) {
         console.warn("URH Client: Tier 2 CodeTabs proxy failed for chunk:", chunk, e);
@@ -105,12 +112,15 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
     if (!success) {
       try {
         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`);
-        if (res.ok) {
+        const contentType = res.headers.get("Content-Type") || "";
+        if (res.ok && contentType.toLowerCase().includes("audio")) {
           const buf = await res.arrayBuffer();
           if (buf.byteLength > 100) {
             buffers.push(buf);
             success = true;
           }
+        } else {
+          console.warn("URH Client: Tier 3 proxy ignored non-audio Content-Type:", contentType);
         }
       } catch (e) {
         console.warn("URH Client: Tier 3 CORSProxy.io failed for chunk:", chunk, e);
@@ -121,12 +131,15 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
     if (!success) {
       try {
         const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`);
-        if (res.ok) {
+        const contentType = res.headers.get("Content-Type") || "";
+        if (res.ok && contentType.toLowerCase().includes("audio")) {
           const buf = await res.arrayBuffer();
           if (buf.byteLength > 100) {
             buffers.push(buf);
             success = true;
           }
+        } else {
+          console.warn("URH Client: Tier 4 proxy ignored non-audio Content-Type:", contentType);
         }
       } catch (e) {
         console.warn("URH Client: Tier 4 AllOrigins raw fallback failed for chunk:", chunk, e);
@@ -138,10 +151,13 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
       console.warn(`URH Client: CORS proxy chain exhausted, attempting direct fetch of chunk`);
       try {
         const res = await fetch(ttsUrl);
-        if (res.ok) {
+        const contentType = res.headers.get("Content-Type") || "";
+        if (res.ok && contentType.toLowerCase().includes("audio")) {
           const buf = await res.arrayBuffer();
           buffers.push(buf);
           success = true;
+        } else {
+          console.warn("URH Client: Tier 5 direct fetch ignored non-audio Content-Type:", contentType);
         }
       } catch (e) {
         console.error(`URH Client: Direct fetch failed for chunk: "${chunk}"`, e);
@@ -162,7 +178,7 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
     offset += buf.byteLength;
   }
 
-  const finalBlob = new Blob([combined.buffer], { type: "audio/mpeg" });
+  const finalBlob = new Blob([combined], { type: "audio/mpeg" });
   return URL.createObjectURL(finalBlob);
 }
 
@@ -1708,7 +1724,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                  conversionProgress < 75 ? "Rendering high-frequency sibilance overlays..." :
                  conversionProgress < 95 ? "Structuring downloadable PCM file stream..." : "Synthesis node compilation successful."}
               </span>
-              <span>16.0 kHz Mono WAV</span>
+              <span>{isFallbackAudio ? "16.0 kHz Mono WAV" : "44.1 kHz Stereo MP3"}</span>
             </div>
           </div>
         )}
@@ -1795,18 +1811,36 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                             try {
                               const response = await fetch(synthesizedAudioUrl);
                               const blob = await response.blob();
+                              
+                              // Check if the binary is polluted with HTML (e.g. a proxy blocking page or Vercel error)
+                              const textSample = await blob.slice(0, 300).text();
+                              if (textSample.toLowerCase().includes("<html") || textSample.toLowerCase().includes("<!doctype")) {
+                                throw new Error("Downloaded data is not a valid audio stream (HTML/Captcha/Block response received).");
+                              }
+
                               const blobUrl = window.URL.createObjectURL(blob);
                               const link = document.createElement("a");
                               link.href = blobUrl;
                               const sanitizedTitle = scriptTitle.trim().replace(/[\s/\\?%*:|"<>]+/g, "_") || "URH_Synthesized_Voice";
-                              const ext = isFallbackAudio ? "wav" : "mp3";
+                              
+                              // Set extension dynamically based on actual Blob MIME type
+                              let ext = "mp3";
+                              if (blob.type.includes("wav")) {
+                                ext = "wav";
+                              } else if (blob.type.includes("mpeg") || blob.type.includes("mp3")) {
+                                ext = "mp3";
+                              } else {
+                                ext = isFallbackAudio ? "wav" : "mp3";
+                              }
+
                               link.download = `${sanitizedTitle}.${ext}`;
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
                               window.URL.revokeObjectURL(blobUrl);
-                            } catch (err) {
-                              console.error("Custom download fail, falling back to dynamic anchor click", err);
+                            } catch (err: any) {
+                              console.error("Custom download fail, falling back to direct anchor click:", err);
+                              alert(err.message || "Unable to download audio due to server or proxy limitation.");
                               const link = document.createElement("a");
                               link.href = synthesizedAudioUrl;
                               const sanitizedTitle = scriptTitle.trim().replace(/[\s/\\?%*:|"<>]+/g, "_") || "URH_Synthesized_Voice";

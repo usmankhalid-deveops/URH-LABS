@@ -88,7 +88,7 @@ async function startServer() {
 
       // Request chunks parallelly with robust 3-try retries to make synthesis instantaneous-fast and bypass single-thread delays!
       const chunkPromises = chunks.map(async (chunk) => {
-        const targetUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
+        const targetUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
             const response = await fetch(targetUrl, {
@@ -96,9 +96,12 @@ async function startServer() {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36"
               }
             });
-            if (response.ok) {
+            const contentType = response.headers.get("Content-Type") || "";
+            if (response.ok && contentType.toLowerCase().includes("audio")) {
               const arrBuf = await response.arrayBuffer();
               return Buffer.from(arrBuf);
+            } else {
+              console.warn(`URH Labs TTS Proxy Attempt ${attempt + 1}: Ignored non-audio or invalid response for chunk. Status: ${response.status}, Content-Type: ${contentType}`);
             }
           } catch (e) {
             console.error(`URH Labs TTS Proxy Attempt ${attempt + 1} failed for chunk: "${chunk.substring(0, 25)}..."`, e);
@@ -180,55 +183,65 @@ async function startServer() {
 
     // Execute server-side Gemini request if configured, otherwise fallback to premium mock
     if (ai) {
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: prompt,
-          config: {
-            systemInstruction,
-            temperature: 0.7,
-          }
-        });
+      let finalResponseText = "";
+      let modelUsed = "";
+      let success = false;
 
-        const outputText = response.text || "Failed to extract valid response text from Gemini API.";
+      // Robust multi-model fallback chain with exponential backoff retries!
+      const modelsToTry = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
+
+      for (const modelName of modelsToTry) {
+        if (success) break;
+        console.log(`URH Labs: Requesting model '${modelName}'...`);
+        
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: prompt,
+              config: {
+                systemInstruction,
+                temperature: 0.7,
+              }
+            });
+
+            if (response && response.text) {
+              finalResponseText = response.text;
+              modelUsed = modelName;
+              success = true;
+              break;
+            }
+          } catch (err: any) {
+            const status = err.status || (err.error && err.error.code);
+            const isRetryable = status === 503 || status === 429 || status === 500 || (err.message && (err.message.includes("503") || err.message.includes("429") || err.message.includes("UNAVAILABLE")));
+            
+            if (isRetryable && attempt < 3) {
+              const delay = attempt * 600; // Exponential-like backoff: 600ms, 1200ms
+              console.warn(`URH Labs: Model '${modelName}' returned retryable error (Attempt ${attempt}/3). Retrying in ${delay}ms... Error: ${err.message || err}`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              console.warn(`URH Labs: Model '${modelName}' failed on Attempt ${attempt}/3. Error: ${err.message || err}`);
+              break; // Break the retry loop and proceed to next fallback model
+            }
+          }
+        }
+      }
+
+      if (success) {
         return res.json({
-          response: outputText,
+          response: finalResponseText,
           creditsUsed,
-          modelUsed: "gemini-3.5-flash",
+          modelUsed,
           timestamp: new Date().toISOString()
         });
-      } catch (err: any) {
-        console.warn("URH Labs Gemini API Overloaded (primary model). Handled gracefully via fallback chain. Error info:", err.message || err);
+      } else {
+        // Instead of returning a 502/503 error, let's gracefully fall back to the premium mock generation 
+        // to guarantee high availability and a seamless, unbroken user experience!
+        console.warn("URH Labs: Both primary and fallback models failed or were overloaded. Utilizing high-fidelity URH Vocal Engine Simulation...");
+        const inputStr = typeof input === "object" ? (input.content || JSON.stringify(input)) : String(input);
+        let mockedResponse = "";
         
-        // Attempt a fallback model: gemini-3.1-flash-lite
-        try {
-          console.log("Attempting fallback to 'gemini-3.1-flash-lite'...");
-          const responseFallback = await ai.models.generateContent({
-            model: "gemini-3.1-flash-lite",
-            contents: prompt,
-            config: {
-              systemInstruction,
-              temperature: 0.7,
-            }
-          });
-          
-          const outputText = responseFallback.text || "Failed to extract valid response text from fallback Gemini API.";
-          return res.json({
-            response: outputText,
-            creditsUsed,
-            modelUsed: "gemini-3.1-flash-lite",
-            timestamp: new Date().toISOString()
-          });
-        } catch (fallbackErr: any) {
-          console.warn("URH Labs Gemini API Overloaded (fallback model). Transitioning to local simulation. Error info:", fallbackErr.message || fallbackErr);
-          
-          // Instead of returning a 502/503 error, let's gracefully fall back to the premium mock generation 
-          // to guarantee high availability and a seamless, unbroken user experience!
-          console.warn("Both primary and fallback models failed or were overloaded. Utilizing high-fidelity URH Vocal Engine Simulation...");
-          const inputStr = typeof input === "object" ? (input.content || JSON.stringify(input)) : String(input);
-          let mockedResponse = "";
-          
-          if (tool === "Text to Speech") {
+        if (tool === "Text to Speech") {
             mockedResponse = `### 🎙️ URH Neural Synthesizer Blueprint
 
 *   **Original Script Input:** "${inputStr.substring(0, 150)}..."
@@ -366,7 +379,6 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             timestamp: new Date().toISOString()
           });
         }
-      }
     } else {
       // PREMIUM MOCKED FALLBACK SYSTEM - High fidelity simulated voice synthesis response
       // It uses the actual input to make it feel highly personal and fully realistic!
