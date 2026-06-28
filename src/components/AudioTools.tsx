@@ -845,6 +845,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
           try {
             const matchedVoice = combinedAssistants.find(a => a.name === selectedVoice);
             const lang = getVoiceLocale(selectedVoice);
+            const voiceId = matchedVoice?.id || selectedVoice;
             
             // High-fidelity natural human speech TTS proxy (Supports POST for unlimited character documents!)
             const response = await fetch("/api/voice/proxy-tts", {
@@ -854,29 +855,46 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
               },
               body: JSON.stringify({
                 text: textToSpeechInput || "No input text provided.",
-                lang
+                lang,
+                voiceId
               })
             });
-            if (response.ok) {
-              const blob = await response.blob();
-              // Verify that the blob is not an HTML/error response
-              const textSample = await blob.slice(0, 300).text();
-              if (
-                textSample.toLowerCase().includes("<html") || 
-                textSample.toLowerCase().includes("<!doctype") || 
-                textSample.toLowerCase().includes("cloudflare") || 
-                textSample.toLowerCase().includes("access denied") ||
-                textSample.toLowerCase().includes("captcha")
-              ) {
-                throw new Error("Received HTML error/captcha instead of audio.");
-              }
-              const blobUrl = URL.createObjectURL(blob);
-              setIsFallbackAudio(false);
-              setSynthesizedAudioUrl(blobUrl);
-            } else {
-              throw new Error("HTTP-POST proxy-tts returned error status.");
+
+            console.log("[URH LABS TTS Fetch] Response Status:", response.status);
+            console.log("[URH LABS TTS Fetch] Content-Type:", response.headers.get("Content-Type"));
+            console.log("[URH LABS TTS Fetch] Content-Length:", response.headers.get("Content-Length"));
+
+            if (!response.ok) {
+              throw new Error(`HTTP proxy-tts returned error status: ${response.status}`);
             }
-          } catch (e) {
+
+            const contentType = response.headers.get("Content-Type") || "";
+            if (!contentType.toLowerCase().includes("audio")) {
+              throw new Error(`Invalid response Content-Type: ${contentType}. Expected audio stream.`);
+            }
+
+            const blob = await response.blob();
+            console.log("[URH LABS TTS Fetch] Blob Size:", blob.size);
+
+            if (blob.size < 500) {
+              throw new Error(`Received truncated or empty audio file from voice engine (size: ${blob.size} bytes).`);
+            }
+
+            // Verify that the blob is not an HTML/error response
+            const textSample = await blob.slice(0, 300).text();
+            if (
+              textSample.toLowerCase().includes("<html") || 
+              textSample.toLowerCase().includes("<!doctype") || 
+              textSample.toLowerCase().includes("cloudflare") || 
+              textSample.toLowerCase().includes("access denied") ||
+              textSample.toLowerCase().includes("captcha")
+            ) {
+              throw new Error("Received HTML error/captcha instead of audio.");
+            }
+            const blobUrl = URL.createObjectURL(blob);
+            setIsFallbackAudio(false);
+            setSynthesizedAudioUrl(blobUrl);
+          } catch (e: any) {
             console.error("URH LABS: Failed to construct dynamic synthesized audio file, falling back:", e);
             const matchedVoice = combinedAssistants.find(a => a.name === selectedVoice);
             const pitch = matchedVoice ? matchedVoice.pitch : 1.0;
@@ -899,6 +917,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
           try {
             const matchedVoice = combinedAssistants.find(a => a.name === conversionTarget);
             const lang = getVoiceLocale(conversionTarget);
+            const voiceId = matchedVoice?.id || conversionTarget;
             
             // High-fidelity voice conversion generator utilizing robust post requests
             const response = await fetch("/api/voice/proxy-tts", {
@@ -908,29 +927,46 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
               },
               body: JSON.stringify({
                 text: conversionInputText || "No voice conversion script content detected.",
-                lang
+                lang,
+                voiceId
               })
             });
-            if (response.ok) {
-              const blob = await response.blob();
-              // Verify that the blob is not an HTML/error response
-              const textSample = await blob.slice(0, 300).text();
-              if (
-                textSample.toLowerCase().includes("<html") || 
-                textSample.toLowerCase().includes("<!doctype") || 
-                textSample.toLowerCase().includes("cloudflare") || 
-                textSample.toLowerCase().includes("access denied") ||
-                textSample.toLowerCase().includes("captcha")
-              ) {
-                throw new Error("Received HTML error/captcha instead of audio.");
-              }
-              const blobUrl = URL.createObjectURL(blob);
-              setIsFallbackAudio(false);
-              setSynthesizedAudioUrl(blobUrl);
-            } else {
-              throw new Error("HTTP-POST proxy-tts returned error status for voice conversion.");
+
+            console.log("[URH LABS Conversion Fetch] Response Status:", response.status);
+            console.log("[URH LABS Conversion Fetch] Content-Type:", response.headers.get("Content-Type"));
+            console.log("[URH LABS Conversion Fetch] Content-Length:", response.headers.get("Content-Length"));
+
+            if (!response.ok) {
+              throw new Error(`HTTP proxy-tts returned error status: ${response.status}`);
             }
-          } catch (e) {
+
+            const contentType = response.headers.get("Content-Type") || "";
+            if (!contentType.toLowerCase().includes("audio")) {
+              throw new Error(`Invalid response Content-Type: ${contentType}. Expected audio stream.`);
+            }
+
+            const blob = await response.blob();
+            console.log("[URH LABS Conversion Fetch] Blob Size:", blob.size);
+
+            if (blob.size < 500) {
+              throw new Error(`Received truncated or empty audio file from conversion engine (size: ${blob.size} bytes).`);
+            }
+
+            // Verify that the blob is not an HTML/error response
+            const textSample = await blob.slice(0, 300).text();
+            if (
+              textSample.toLowerCase().includes("<html") || 
+              textSample.toLowerCase().includes("<!doctype") || 
+              textSample.toLowerCase().includes("cloudflare") || 
+              textSample.toLowerCase().includes("access denied") ||
+              textSample.toLowerCase().includes("captcha")
+            ) {
+              throw new Error("Received HTML error/captcha instead of audio.");
+            }
+            const blobUrl = URL.createObjectURL(blob);
+            setIsFallbackAudio(false);
+            setSynthesizedAudioUrl(blobUrl);
+          } catch (e: any) {
             console.error("URH LABS: Failed to construct converted cloning synthesis audio:", e);
             const matchedVoice = combinedAssistants.find(a => a.name === conversionTarget);
             const pitch = matchedVoice ? matchedVoice.pitch : 1.0;

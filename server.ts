@@ -51,17 +51,121 @@ async function startServer() {
     res.json({ status: "healthy", keyConfigured: !!geminiApiKey });
   });
 
+  // --- UTILITY FOR DYNAMIC SPEECH WAV WRAPPING ---
+  function createWavHeader(dataLength: number, sampleRate = 24000): Buffer {
+    const header = Buffer.alloc(44);
+    
+    // ChunkID: "RIFF"
+    header.write("RIFF", 0);
+    // ChunkSize: 36 + SubChunk2Size
+    header.writeUInt32LE(36 + dataLength, 4);
+    // Format: "WAVE"
+    header.write("WAVE", 8);
+    
+    // Subchunk1ID: "fmt "
+    header.write("fmt ", 12);
+    // Subchunk1Size: 16 (for PCM)
+    header.writeUInt32LE(16, 16);
+    // AudioFormat: 1 (for uncompressed PCM)
+    header.writeUInt16LE(1, 20);
+    // NumChannels: 1 (Mono)
+    header.writeUInt16LE(1, 22);
+    // SampleRate: sampleRate (e.g., 24000)
+    header.writeUInt32LE(sampleRate, 24);
+    // ByteRate: SampleRate * NumChannels * BitsPerSample/8
+    header.writeUInt32LE(sampleRate * 1 * 2, 28);
+    // BlockAlign: NumChannels * BitsPerSample/8
+    header.writeUInt16LE(2, 32);
+    // BitsPerSample: 16
+    header.writeUInt16LE(16, 34);
+    
+    // Subchunk2ID: "data"
+    header.write("data", 36);
+    // Subchunk2Size: dataLength
+    header.writeUInt32LE(dataLength, 40);
+    
+    return header;
+  }
+
+  function mapVoiceToGeminiPrebuilt(voiceIdOrName: string): "Kore" | "Fenrir" | "Zephyr" | "Puck" | "Charon" {
+    const normalized = String(voiceIdOrName || "").toLowerCase();
+    if (normalized.includes("puck")) return "Puck";
+    if (normalized.includes("charon")) return "Charon";
+    if (normalized.includes("kore")) return "Kore";
+    if (normalized.includes("fenrir")) return "Fenrir";
+    if (normalized.includes("zephyr")) return "Zephyr";
+    
+    // Male fallbacks
+    if (normalized.includes("jarvis") || normalized.includes("marcus") || normalized.includes("hal")) {
+      return "Fenrir";
+    }
+    
+    // Female fallbacks
+    if (normalized.includes("samantha") || normalized.includes("cortana") || normalized.includes("friday") || normalized.includes("clara") || normalized.includes("aria")) {
+      return "Zephyr";
+    }
+    
+    return "Kore"; // Default fallback
+  }
+
   // --- REAL-TIME HIGH FIDELITY TTS PROXY (GOOG TRANS BOTH GET AND POST) ---
   app.all("/api/voice/proxy-tts", async (req, res) => {
     try {
       const isPost = req.method === "POST";
       const textToSpeak = String(isPost ? (req.body.text || "") : (req.query.text || "")).trim();
       const lang = String(isPost ? (req.body.lang || "en") : (req.query.lang || "en")).trim();
+      const voiceId = String(isPost ? (req.body.voiceId || "") : (req.query.voiceId || "")).trim();
 
       if (!textToSpeak) {
         return res.status(400).send("text content is required.");
       }
 
+      console.log(`[URH LABS TTS] Initiated TTS request. Length: ${textToSpeak.length} chars, voiceId: "${voiceId}", lang: "${lang}"`);
+
+      // Attempt 1: If Gemini API client is initialized, use the official high-fidelity gemini-3.1-flash-tts-preview model!
+      if (ai) {
+        try {
+          const prebuiltVoice = mapVoiceToGeminiPrebuilt(voiceId || lang);
+          console.log(`[URH LABS TTS] Invoking Gemini TTS. Selected Prebuilt voice: ${prebuiltVoice}`);
+
+          const response = await ai.models.generateContent({
+            model: "gemini-3.1-flash-tts-preview",
+            contents: [{ parts: [{ text: textToSpeak }] }],
+            config: {
+              responseModalities: ["AUDIO"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: prebuiltVoice },
+                },
+              },
+            },
+          });
+
+          const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (base64Audio) {
+            const rawPcm = Buffer.from(base64Audio, "base64");
+            console.log(`[URH LABS TTS] Gemini TTS succeeded! Generated raw PCM size: ${rawPcm.length} bytes`);
+
+            if (rawPcm.length > 100) {
+              const wavHeader = createWavHeader(rawPcm.length, 24000);
+              const combinedWav = Buffer.concat([wavHeader, rawPcm]);
+
+              console.log(`[URH LABS TTS] Completed WAV packaging. Content-Length: ${combinedWav.length}`);
+              res.setHeader("Content-Type", "audio/wav");
+              res.setHeader("Content-Length", combinedWav.length.toString());
+              res.setHeader("Content-Disposition", 'inline; filename="urh_voice_synthesis.wav"');
+              return res.send(combinedWav);
+            }
+          }
+          console.warn("[URH LABS TTS] Gemini TTS generated empty audio data. Falling back to HTTP proxy.");
+        } catch (geminiErr: any) {
+          console.error("[URH LABS TTS] Gemini TTS processing failed, falling back to Translate proxy:", geminiErr.message || geminiErr);
+        }
+      } else {
+        console.warn("[URH LABS TTS] Gemini API is not initialized. Falling back to public Translate proxies.");
+      }
+
+      // Fallback Method: Segment-based Translate proxy
       // Google Translate TTS limits character length to around 150-200. Let's chunk the text by words.
       const maxChunk = 160;
       const words = textToSpeak.split(/\s+/);
@@ -155,6 +259,7 @@ async function startServer() {
       const combinedAudio = Buffer.concat(audioBuffers);
 
       res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", combinedAudio.length.toString());
       res.setHeader("Content-Disposition", `inline; filename="urh_voice_synthesis.mp3"`);
       res.send(combinedAudio);
     } catch (err: any) {
