@@ -329,24 +329,6 @@ export default function Auth({ onAuthSuccess, initialForm = "login", onBackToLan
                     {activeForm === "login" ? "Create an account" : "Log in node"}
                   </button>
                 </div>
-
-                {activeForm === "login" && (
-                  <div className="mt-2 p-3 rounded-lg bg-white/5 border border-white/10 text-left w-full text-[11px] font-sans">
-                    <span className="font-mono text-[9px] uppercase tracking-wider text-[#00ff66] font-bold block mb-1">Sandbox Evaluation Credentials</span>
-                    <div className="grid grid-cols-2 gap-2 text-gray-400 font-mono">
-                      <div>
-                        <strong className="text-white text-[10px] block font-sans">Client:</strong>
-                        <span>john@example.com</span><br/>
-                        <span>password123</span>
-                      </div>
-                      <div>
-                        <strong className="text-white text-[10px] block font-sans">Admin:</strong>
-                        <span>usmankhalid619131@gmail.com</span><br/>
-                        <span>619131</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
 
             </div>

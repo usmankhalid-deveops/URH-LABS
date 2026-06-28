@@ -131,8 +131,23 @@ function generateSpeechWav(
     // Zero sibilance noise per user request to completely eliminate clicks, hiss, and buzz
     const noise = 0;
     
-    // Combine to form a soothing acoustic digital signal with absolutely no background noise (Silence ensures absolute noiselessness on browser fallback)
-    let sample = 0;
+    // Soft, organic vocal tract approximation
+    // We sum a rich series of odd/even harmonics representing a warm vocal fold vibration (glottal source)
+    const f0 = pitch;
+    const excitation = Math.sin(2 * Math.PI * f0 * t) 
+                     + 0.5 * Math.sin(2 * Math.PI * 2 * f0 * t) 
+                     + 0.2 * Math.sin(2 * Math.PI * 3 * f0 * t);
+    
+    // Simulate vocal tract resonant filter formants
+    const res1 = Math.sin(2 * Math.PI * f1 * t);
+    const res2 = Math.sin(2 * Math.PI * f2 * t);
+    
+    // Combine vocal source with formant filter gains and syllable envelope
+    let sample = excitation * (res1 * 0.55 + res2 * 0.35) * envelope * 0.28;
+    
+    // Smooth peak limiting
+    if (sample > 1.0) sample = 1.0;
+    if (sample < -1.0) sample = -1.0;
     
     // Map to signed 16-bit PCM integer
     const int16Val = Math.floor(sample * 32767);
@@ -216,6 +231,7 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
   
   // Custom states
   const [clonedVoices, setClonedVoices] = useState<ClonedVoice[]>([]);
+  const [userHistory, setUserHistory] = useState<HistoryItem[]>([]);
   const [cloneGender, setCloneGender] = useState<"Male" | "Female" | "Neutral">("Male");
   const [isSavingClone, setIsSavingClone] = useState(false);
   const [cloneSavedSuccess, setCloneSavedSuccess] = useState(false);
@@ -232,8 +248,19 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
     }
   };
 
+  const loadUserHistory = async () => {
+    const uid = user?.uid || "guest-user";
+    try {
+      const list = await FirebaseIntegration.getUserHistory(uid);
+      setUserHistory(list);
+    } catch (e) {
+      console.error("URH LABS: Failed to load user history:", e);
+    }
+  };
+
   useEffect(() => {
     loadClonedVoices();
+    loadUserHistory();
   }, [user?.uid]);
 
   // Combined list of assistants including user's custom saved voice clones
@@ -784,6 +811,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
         // Notify app parent hooks to synchronize metrics
         onAddHistory(logItem);
         onRefreshUser();
+        loadUserHistory();
       } else {
         clearInterval(progressInterval);
         setConversionProgress(0);
@@ -1039,6 +1067,66 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                   Capacity: <strong className="text-[#00f0ff]">80,000+ characters supported</strong> at a time ({100000 - textToSpeechInput.length > 0 ? `${(100000 - textToSpeechInput.length).toLocaleString()} remaining` : "Limit reached"})
                 </span>
               </div>
+
+              {/* Dynamic Real-time Character conversion guide */}
+              {user && user.role !== "admin" && (
+                <div className="mt-3 bg-[#050510] border border-white/5 rounded-xl p-4 space-y-3 font-mono text-[11px] text-gray-400 text-left">
+                  <div className="flex items-center justify-between text-xs text-white pb-2 border-b border-white/5">
+                    <span className="font-bold flex items-center gap-1.5 text-gray-200">
+                      <span className="w-2 h-2 rounded-full bg-[#00ff66] animate-pulse"></span>
+                      Live Character Conversion Tracker
+                    </span>
+                    <span className="text-[10px] bg-[#00ff66]/15 text-[#00ff66] px-2.5 py-0.5 rounded-full font-bold">
+                      {user.plan}
+                    </span>
+                  </div>
+                  
+                  {/* Plan calculations */}
+                  {(() => {
+                    const getPlanLimit = (planName: string): number => {
+                      if (planName === "1M Characters" || planName.includes("1M")) return 1000000;
+                      if (planName === "3M Characters" || planName.includes("3M")) return 3000000;
+                      if (planName === "5M Characters" || planName.includes("5M")) return 5000000;
+                      if (planName === "11M Characters" || planName.includes("11M")) return 11000000;
+                      return 50000; // Free Plan or fallback
+                    };
+                    
+                    const limit = getPlanLimit(user.plan);
+                    const remaining = user.credits;
+                    const used = userHistory.reduce((sum, h) => sum + (h.creditsUsed || 0), 0);
+                    const typingLength = textToSpeechInput.length;
+                    const expectedRemaining = Math.max(0, remaining - typingLength);
+                    
+                    return (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                          <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/5">
+                            <div className="text-gray-500 text-[9px] uppercase font-bold">Package Limit</div>
+                            <div className="text-white font-black text-xs sm:text-sm mt-0.5">{limit.toLocaleString()}</div>
+                          </div>
+                          <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/5">
+                            <div className="text-gray-500 text-[9px] uppercase font-bold">Total Converted</div>
+                            <div className="text-[#00ff66] font-black text-xs sm:text-sm mt-0.5">{used.toLocaleString()}</div>
+                          </div>
+                          <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/5">
+                            <div className="text-gray-500 text-[9px] uppercase font-bold">Current Script</div>
+                            <div className="text-[#00f0ff] font-black text-xs sm:text-sm mt-0.5">{typingLength.toLocaleString()}</div>
+                          </div>
+                          <div className="bg-white/[0.02] p-2.5 rounded-lg border border-white/5">
+                            <div className="text-gray-500 text-[9px] uppercase font-bold">More Allowed</div>
+                            <div className="text-rose-400 font-black text-xs sm:text-sm mt-0.5">{expectedRemaining.toLocaleString()}</div>
+                          </div>
+                        </div>
+                        
+                        <div className="text-[10px] text-gray-400 leading-normal font-sans pt-1">
+                          <span className="text-[#00ff66] font-bold mr-1">Conversion Metric:</span>
+                          You have converted <strong className="text-white">{used.toLocaleString()} characters</strong>. At this moment, your current script requires <strong className="text-[#00f0ff]">{typingLength.toLocaleString()} characters</strong>. Upon converting this script, you will have exactly <strong className="text-[#00ff66]">{expectedRemaining.toLocaleString()} more characters</strong> available to convert.
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1633,7 +1721,8 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                               const link = document.createElement("a");
                               link.href = blobUrl;
                               const sanitizedTitle = scriptTitle.trim().replace(/[\s/\\?%*:|"<>]+/g, "_") || "URH_Synthesized_Voice";
-                              link.download = `${sanitizedTitle}.mp3`;
+                              const ext = isFallbackAudio ? "wav" : "mp3";
+                              link.download = `${sanitizedTitle}.${ext}`;
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
@@ -1643,7 +1732,8 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                               const link = document.createElement("a");
                               link.href = synthesizedAudioUrl;
                               const sanitizedTitle = scriptTitle.trim().replace(/[\s/\\?%*:|"<>]+/g, "_") || "URH_Synthesized_Voice";
-                              link.download = `${sanitizedTitle}.mp3`;
+                              const ext = isFallbackAudio ? "wav" : "mp3";
+                              link.download = `${sanitizedTitle}.${ext}`;
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
@@ -1652,7 +1742,7 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                           className="px-2.5 py-1.5 bg-[#00ff66] hover:bg-[#00ff66]/90 text-black font-extrabold text-[10px] uppercase tracking-wider rounded-lg flex items-center gap-1 transition-all shadow cursor-pointer"
                         >
                           <HardDriveDownload className="w-3.5 h-3.5 text-black" />
-                          <span>Download Voice (.mp3)</span>
+                          <span>Download Voice ({isFallbackAudio ? ".wav" : ".mp3"})</span>
                         </button>
                       </div>
 
@@ -1673,6 +1763,12 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                           className="w-full h-8 accent-[#00ff66] bg-black/40 rounded-lg text-xs"
                         />
                       </div>
+
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#00ff66]/10 border border-[#00ff66]/20 text-[10px] text-[#00ff66] font-mono font-bold uppercase w-fit tracking-wider">
+                        <Check className="w-3.5 h-3.5 text-[#00ff66]" />
+                        <span>converted one voice</span>
+                      </div>
+
                       <p className="text-[10px] text-gray-400 font-mono">
                         💡 <b>Real-time Vocal Synth Active:</b> Click play or "Speak Aloud" to trigger realistic, crystal-clear speech synthesis without noise.
                       </p>

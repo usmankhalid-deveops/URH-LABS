@@ -247,6 +247,7 @@ export default function App() {
               user={user} 
               history={history} 
               setActivePage={setActivePage} 
+              onLogout={handleLogout}
             />
           )}
 

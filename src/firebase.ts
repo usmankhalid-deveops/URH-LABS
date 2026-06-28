@@ -314,9 +314,9 @@ if (!localStorage.getItem(LOCAL_USERS_KEY)) {
     },
     "user-uid": {
       uid: "user-uid",
-      name: "John Doe",
-      email: "john@example.com",
-      credits: 15400,
+      name: "Ali Khan",
+      email: "alikhan619@gmail.com",
+      credits: 50000,
       plan: "Free Plan",
       role: "user",
       createdAt: new Date().toISOString(),
@@ -331,8 +331,8 @@ if (!localStorage.getItem(LOCAL_PAYMENTS_KEY)) {
     {
       id: "req-1",
       userId: "user-uid",
-      userName: "John Doe",
-      userEmail: "john@example.com",
+      userName: "Ali Khan",
+      userEmail: "alikhan619@gmail.com",
       amount: 4500,
       screenshotUrl: "https://images.unsplash.com/photo-1616077168079-7e09a677fb2c?w=400&q=80",
       status: "pending",
@@ -341,8 +341,8 @@ if (!localStorage.getItem(LOCAL_PAYMENTS_KEY)) {
     {
       id: "req-2",
       userId: "user-uid",
-      userName: "John Doe",
-      userEmail: "john@example.com",
+      userName: "Ali Khan",
+      userEmail: "alikhan619@gmail.com",
       amount: 12000,
       screenshotUrl: "https://images.unsplash.com/photo-1616077168079-7e09a677fb2c?w=400&q=80",
       status: "approved",
@@ -978,18 +978,31 @@ export const FirebaseIntegration = {
   },
 
   getUserProfile: async (uid: string): Promise<UserProfile | null> => {
+    const users = getLocalUsers();
+    const localProfile = users[uid] || null;
+
     if (isRealFirebase && firebaseDb) {
       try {
         const snap = await runWithTimeout(getDoc(doc(firebaseDb, "users", uid)), 3000);
-        return snap.exists() ? (snap.data() as UserProfile) : null;
+        if (snap.exists()) {
+          const remoteProfile = snap.data() as UserProfile;
+          if (localProfile) {
+            return {
+              ...remoteProfile,
+              // Intelligently preserve the lower credits (prevent async lag rollbacks on deduction)
+              credits: Math.min(localProfile.credits, remoteProfile.credits),
+              usedDuration: Math.max(localProfile.usedDuration || 0, remoteProfile.usedDuration || 0)
+            };
+          }
+          return remoteProfile;
+        }
+        return localProfile;
       } catch (err) {
         console.warn(`URH LABS: Failed to read doc users/${uid} from remote Firestore. Falling back to LocalStorage cache.`, err);
-        const users = getLocalUsers();
-        return users[uid] || null;
+        return localProfile;
       }
     } else {
-      const users = getLocalUsers();
-      return users[uid] || null;
+      return localProfile;
     }
   },
 
@@ -1185,20 +1198,33 @@ export const FirebaseIntegration = {
   },
 
   getUserHistory: async (userId: string): Promise<HistoryItem[]> => {
+    const localList = getLocalHistory().filter(item => item.userId === userId);
+
     if (isRealFirebase && firebaseDb) {
       try {
         const snap = await runWithTimeout(getDocs(collection(firebaseDb, `users/${userId}/history`)), 3000);
-        const res: HistoryItem[] = [];
-        snap.forEach((doc) => res.push(doc.data() as HistoryItem));
-        return res.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        const remoteList: HistoryItem[] = [];
+        snap.forEach((doc) => remoteList.push(doc.data() as HistoryItem));
+        
+        // Merge remote list and local list, deduplicating by ID
+        const mergedMap = new Map<string, HistoryItem>();
+        // Add local items first (they are immediate and highly trustworthy)
+        localList.forEach(item => mergedMap.set(item.id, item));
+        // Add remote items if they don't already exist in the map
+        remoteList.forEach(item => {
+          if (!mergedMap.has(item.id)) {
+            mergedMap.set(item.id, item);
+          }
+        });
+        
+        const mergedList = Array.from(mergedMap.values());
+        return mergedList.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       } catch (err) {
         console.warn(`URH LABS: Failed to load user history from remote Firestore. Falling back to local cache.`, err);
-        const list = getLocalHistory();
-        return list.filter(item => item.userId === userId);
+        return localList;
       }
     } else {
-      const list = getLocalHistory();
-      return list.filter(item => item.userId === userId);
+      return localList;
     }
   },
 

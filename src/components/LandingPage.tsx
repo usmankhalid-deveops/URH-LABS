@@ -248,7 +248,6 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
           <nav className="hidden md:flex items-center gap-8 text-[11px] font-mono tracking-widest text-gray-400 capitalize">
             <a href="#features" className="hover:text-[#00f0ff] transition-colors">Neural Modules</a>
             <a href="#playground" className="hover:text-[#00f0ff] transition-colors">Acoustic Sandbox</a>
-            <a href="#pricing" className="hover:text-[#00f0ff] transition-colors">Token Pricing</a>
             <a href="#faq" className="hover:text-[#00f0ff] transition-colors">Tech Specs</a>
           </nav>
 
@@ -544,76 +543,6 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
               </p>
             </div>
 
-          </div>
-        </section>
-
-        {/* TICKET CHARACTERS CREDIT PLAN */}
-        <section id="pricing" className="space-y-16 scroll-mt-24">
-          <div className="text-center max-w-3xl mx-auto space-y-4">
-            <span className="text-[10px] font-mono tracking-widest text-[#00f0ff] uppercase block font-bold">
-              Affordable Credit Mapping
-            </span>
-            <h3 className="text-3xl font-bold tracking-tight text-white leading-tight">
-              Flexible Credits Modules for Limitless Output
-            </h3>
-            <p className="text-gray-400 text-xs sm:text-sm font-sans max-w-xl mx-auto leading-relaxed">
-              Unlock higher limits and character allocations. Submit billing payment screenshots inside the application console to request custom character credits.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {billingPlans.map((plan) => (
-              <div 
-                key={plan.id}
-                className={`p-6 rounded-2xl flex flex-col justify-between space-y-6 relative border transition-all ${
-                  plan.highlight 
-                    ? "bg-[#050510] border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.06)]" 
-                    : "bg-white/[0.01] border-white/5 hover:border-white/10"
-                }`}
-              >
-                {plan.highlight && (
-                  <span className="absolute top-0 right-6 translate-y-[-50%] text-[8px] font-mono tracking-widest font-bold uppercase bg-gradient-to-r from-[#00f0ff] to-[#00ff66] text-black px-2.5 py-1 rounded">
-                    Popular Framework Choice
-                  </span>
-                )}
-
-                <div className="space-y-4 font-mono text-xs">
-                  <div className="space-y-1 text-left">
-                    <span className="text-[10px] text-gray-500 uppercase font-black tracking-widest">{plan.name}</span>
-                    <div className="flex items-baseline gap-2 pt-1">
-                      <span className="text-3xl font-extrabold text-white">{plan.price}</span>
-                      <span className="text-[10px] text-gray-400 font-sans">/ lifetime map</span>
-                    </div>
-                    <span className="text-gray-400 text-[10px] italic block font-sans">{plan.subtext}</span>
-                  </div>
-
-                  {/* Character credits Highlight */}
-                  <div className="bg-white/5 p-3 rounded-lg border border-white/5 font-bold font-mono text-[#00ff66] text-center text-[11px]">
-                    {plan.credits}
-                  </div>
-
-                  <ul className="space-y-2 border-t border-white/5 pt-4 text-left font-sans text-gray-400 text-[11px]">
-                    {plan.features.map((feat, idx) => (
-                      <li key={idx} className="flex items-start gap-2 leading-tight">
-                        <Check className="w-3.5 h-3.5 text-[#00f0ff] shrink-0 mt-0.5" />
-                        <span>{feat}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <button
-                  onClick={() => onGetStarted(plan.mode)}
-                  className={`w-full py-3 rounded-xl font-bold font-mono uppercase text-[11px] uppercase tracking-wider transition-all cursor-pointer ${
-                    plan.highlight
-                      ? "bg-gradient-to-r from-[#00f0ff] to-[#00ff66] text-black hover:brightness-105"
-                      : "bg-white/5 hover:bg-white/10 text-white"
-                  }`}
-                >
-                  {plan.buttonText}
-                </button>
-              </div>
-            ))}
           </div>
         </section>
 

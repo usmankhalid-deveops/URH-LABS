@@ -16,7 +16,8 @@ import {
   History, 
   TrendingUp,
   Award,
-  Database
+  Database,
+  LogOut
 } from "lucide-react";
 import { UserProfile, ActivePage, HistoryItem } from "../types";
 
@@ -24,9 +25,10 @@ interface DashboardProps {
   user: UserProfile | null;
   history: HistoryItem[];
   setActivePage: (page: ActivePage) => void;
+  onLogout: () => void;
 }
 
-export default function Dashboard({ user, history, setActivePage }: DashboardProps) {
+export default function Dashboard({ user, history, setActivePage, onLogout }: DashboardProps) {
   // Safe bounds for credits computations
   const totalAllocated = user?.plan === "Free Plan" ? 50000 : 
                          user?.plan === "1M Characters" ? 1000000 :
@@ -40,10 +42,13 @@ export default function Dashboard({ user, history, setActivePage }: DashboardPro
   const circum = 2 * Math.PI * 70; // r=70 stroke-dasharray
 
   const quickTools = [
-    { id: "text-to-speech", name: "Text to Speech", desc: "Synthesize high-fidelity voice profiles.", icon: AudioLines, color: "text-[#00f0ff] hover:bg-[#00f0ff]/5" },
-    { id: "speech-to-text", name: "Speech to Text", desc: "Ultra-accurate neural transcription & paragraphs.", icon: Mic, color: "text-[#00ff66] hover:bg-[#00ff66]/5" },
-    { id: "voice-cloning", name: "Voice Cloning", desc: "Clone any voice footprint from audio snippets.", icon: Sparkles, color: "text-purple-400 hover:bg-purple-400/5" },
-    { id: "podcast-studio", name: "Podcast Studio", desc: "Draft high-retention audio scripts automatically.", icon: Radio, color: "text-amber-400 hover:bg-amber-400/5" },
+    { id: "text-to-speech", name: "Text to speech", desc: "Synthesize high-fidelity voice profiles.", icon: AudioLines, color: "text-[#00f0ff] hover:bg-[#00f0ff]/5" },
+    { id: "speech-to-text", name: "Speech to text", desc: "Ultra-accurate neural transcription & paragraphs.", icon: Mic, color: "text-[#00ff66] hover:bg-[#00ff66]/5" },
+    { id: "voice-cloning", name: "Voice clone", desc: "Clone any voice footprint from audio snippets.", icon: Sparkles, color: "text-purple-400 hover:bg-purple-400/5" },
+    { id: "voice-design", name: "Voice design", desc: "Design custom synthetic voices with advanced morphing parameters.", icon: Sliders, color: "text-rose-400 hover:bg-rose-400/5" },
+    { id: "voice-conversion", name: "Voice converter", desc: "Transform any audio track's speaker identity with ease.", icon: FolderSync, color: "text-[#00f0ff] hover:bg-[#00f0ff]/5" },
+    { id: "dubbing", name: "Dubbing app", desc: "Translate and lip-sync video/audio content seamlessly.", icon: Radio, color: "text-teal-400 hover:bg-teal-400/5" },
+    { id: "podcast-studio", name: "Postcard studio", desc: "Draft high-retention audio scripts and multitrack podcasts.", icon: Radio, color: "text-amber-400 hover:bg-amber-400/5" },
   ];
 
   // Render beautiful interactive SVG charts representing weekly characters activity
@@ -280,6 +285,77 @@ export default function Dashboard({ user, history, setActivePage }: DashboardPro
           })}
         </div>
       </div>
+
+      {/* Account Session & Plan Health Node */}
+      {(() => {
+        const remainingPct = totalAllocated > 0 ? (remaining / totalAllocated) * 100 : 0;
+        return (
+          <div className="p-6 rounded-2xl bg-gradient-to-br from-gray-950 via-black to-slate-950 border border-[#00f0ff]/15 relative overflow-hidden">
+            <div className="absolute right-0 top-0 w-64 h-64 bg-[#00ff66]/5 blur-3xl pointer-events-none rounded-full" />
+            
+            <h3 className="text-lg font-bold tracking-tight text-white mb-4 flex items-center gap-2">
+              <Database className="w-5 h-5 text-[#00ff66]" /> Account & Subscription Status
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-center">
+              {/* User Email & Logout segment */}
+              <div className="space-y-2 border-r border-white/5 pr-4">
+                <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase block">Account Identity</span>
+                <p className="text-sm font-semibold text-white truncate font-sans">{user?.email || "No Email Registered"}</p>
+                
+                <button
+                  onClick={onLogout}
+                  className="mt-2 px-4 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 hover:border-red-500/30 text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-red-500" />
+                  Log out of your account
+                </button>
+              </div>
+
+              {/* Package Information */}
+              <div className="space-y-1.5 border-r border-white/5 pr-4">
+                <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase block">Package Tier</span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-md bg-[#00f0ff]/10 border border-[#00f0ff]/20 text-xs text-[#00f0ff] font-bold">
+                    {user?.plan || "Free Plan"}
+                  </span>
+                </div>
+                <p className="text-[10px] text-gray-400 font-mono">Premium Neural Allocation</p>
+              </div>
+
+              {/* Usage Counters */}
+              <div className="space-y-1.5 border-r border-white/5 pr-4">
+                <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase block">Usage Breakdown</span>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Characters used:</span>
+                    <span className="text-white font-mono font-bold">{consumed.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Remaining:</span>
+                    <span className="text-[#00ff66] font-mono font-black">{remaining.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Plan Health & Remaining Gauge */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-gray-500 font-bold font-mono">
+                  <span>Plan Health</span>
+                  <span className="text-[#00ff66]">{remainingPct.toFixed(1)}% Left</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-white/5 border border-white/5 overflow-hidden">
+                  <div 
+                    style={{ width: `${remainingPct}%` }}
+                    className="h-full bg-gradient-to-r from-[#00f0ff] to-[#00ff66] shadow-[0_0_8px_rgba(0,255,102,0.4)] transition-all duration-500 rounded-full"
+                  />
+                </div>
+                <p className="text-[9px] text-gray-500 font-mono">Package capacity status</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Recent Telemetry Requests */}
       <div className="space-y-4">
