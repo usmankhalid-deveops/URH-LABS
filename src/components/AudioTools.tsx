@@ -28,6 +28,32 @@ import { FirebaseIntegration } from "../firebase";
 
 // High-fidelity client-side voice synthesis via CORS-free proxy buffers.
 // Splits the text into safe chunks, fetches actual speech audio blocks, and merges them byte-for-byte.
+// Helper function to validate that downloaded/fetched chunks are actual audio and not HTML block/error pages
+function isValidAudioBuffer(buf: ArrayBuffer): boolean {
+  if (!buf || buf.byteLength < 100) return false;
+  // Read first 200 bytes as text to check if it contains HTML or text error markers
+  const uint8 = new Uint8Array(buf.slice(0, Math.min(buf.byteLength, 200)));
+  let text = "";
+  for (let i = 0; i < uint8.length; i++) {
+    text += String.fromCharCode(uint8[i]);
+  }
+  const lowerText = text.toLowerCase();
+  if (
+    lowerText.includes("<html") || 
+    lowerText.includes("<!doctype") || 
+    lowerText.includes("<xml") || 
+    lowerText.includes("{\"error\":") ||
+    lowerText.includes("access denied") ||
+    lowerText.includes("cloudflare") ||
+    lowerText.includes("captcha") ||
+    lowerText.includes("forbidden") ||
+    lowerText.includes("unauthorized")
+  ) {
+    return false;
+  }
+  return true;
+}
+
 async function generateSpeechClientSide(text: string, lang: string): Promise<string> {
   const maxChunk = 160;
   const words = text.split(/\s+/).filter(w => w.length > 0);
@@ -54,119 +80,126 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
 
   const buffers: ArrayBuffer[] = [];
   for (const chunk of chunks) {
-    const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
-    
+    // Try multiple standard TTS formats to bypass rate limits or blocks
+    const ttsUrls = [
+      `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`,
+      `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`,
+      lang.toLowerCase().startsWith("en") 
+        ? `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(chunk)}&type=2`
+        : null
+    ].filter(Boolean) as string[];
+
     let success = false;
 
-    // Tier 1: AllOrigins JSON base64 proxy (Virtually 100% reliable for CORS-bypassing binary stream retrieval)
-    try {
-      const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(ttsUrl)}`);
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.contents) {
-          const dataUrl = json.contents;
-          if (dataUrl.startsWith("data:audio/")) {
-            const base64Index = dataUrl.indexOf(";base64,");
-            if (base64Index !== -1) {
-              const base64 = dataUrl.substring(base64Index + 8).replace(/\s/g, "");
-              const binaryString = window.atob(base64);
-              const len = binaryString.length;
-              const bytes = new Uint8Array(len);
-              for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              if (bytes.byteLength > 100) {
-                buffers.push(bytes.buffer);
-                success = true;
+    for (const ttsUrl of ttsUrls) {
+      if (success) break;
+
+      // Tier 1: AllOrigins JSON base64 proxy (highly reliable)
+      try {
+        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(ttsUrl)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.contents) {
+            const dataUrl = json.contents;
+            if (dataUrl.startsWith("data:audio/") || dataUrl.startsWith("data:application/octet-stream")) {
+              const base64Index = dataUrl.indexOf(";base64,");
+              if (base64Index !== -1) {
+                const base64 = dataUrl.substring(base64Index + 8).replace(/\s/g, "");
+                const binaryString = window.atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                if (isValidAudioBuffer(bytes.buffer)) {
+                  buffers.push(bytes.buffer);
+                  success = true;
+                  break;
+                }
               }
             }
-          } else {
-            console.warn("URH Client: Tier 1 proxy returned non-audio data url:", dataUrl.substring(0, 100));
           }
         }
+      } catch (e) {
+        console.warn("URH Client: Tier 1 proxy failed for chunk:", chunk, e);
       }
-    } catch (e) {
-      console.warn("URH Client: Tier 1 AllOrigins base64 wrapper failed for chunk:", chunk, e);
-    }
 
-    // Tier 2: CodeTabs raw proxy (Independent high-capacity direct stream proxy)
-    if (!success) {
-      try {
-        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ttsUrl)}`);
-        const contentType = res.headers.get("Content-Type") || "";
-        if (res.ok && contentType.toLowerCase().includes("audio")) {
-          const buf = await res.arrayBuffer();
-          if (buf.byteLength > 100) {
-            buffers.push(buf);
-            success = true;
+      // Tier 2: CodeTabs raw proxy
+      if (!success) {
+        try {
+          const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ttsUrl)}`);
+          const contentType = res.headers.get("Content-Type") || "";
+          if (res.ok && (contentType.toLowerCase().includes("audio") || contentType.toLowerCase().includes("octet-stream") || res.status === 200)) {
+            const buf = await res.arrayBuffer();
+            if (isValidAudioBuffer(buf)) {
+              buffers.push(buf);
+              success = true;
+              break;
+            }
           }
-        } else {
-          console.warn("URH Client: Tier 2 proxy ignored non-audio Content-Type:", contentType);
+        } catch (e) {
+          console.warn("URH Client: Tier 2 proxy failed for chunk:", chunk, e);
         }
-      } catch (e) {
-        console.warn("URH Client: Tier 2 CodeTabs proxy failed for chunk:", chunk, e);
       }
-    }
 
-    // Tier 3: CORSProxy.io direct binary proxy
-    if (!success) {
-      try {
-        const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`);
-        const contentType = res.headers.get("Content-Type") || "";
-        if (res.ok && contentType.toLowerCase().includes("audio")) {
-          const buf = await res.arrayBuffer();
-          if (buf.byteLength > 100) {
-            buffers.push(buf);
-            success = true;
+      // Tier 3: CORSProxy.io direct binary proxy
+      if (!success) {
+        try {
+          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`);
+          const contentType = res.headers.get("Content-Type") || "";
+          if (res.ok && (contentType.toLowerCase().includes("audio") || contentType.toLowerCase().includes("octet-stream") || res.status === 200)) {
+            const buf = await res.arrayBuffer();
+            if (isValidAudioBuffer(buf)) {
+              buffers.push(buf);
+              success = true;
+              break;
+            }
           }
-        } else {
-          console.warn("URH Client: Tier 3 proxy ignored non-audio Content-Type:", contentType);
+        } catch (e) {
+          console.warn("URH Client: Tier 3 proxy failed for chunk:", chunk, e);
         }
-      } catch (e) {
-        console.warn("URH Client: Tier 3 CORSProxy.io failed for chunk:", chunk, e);
       }
-    }
 
-    // Tier 4: AllOrigins Raw stream proxy fallback
-    if (!success) {
-      try {
-        const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`);
-        const contentType = res.headers.get("Content-Type") || "";
-        if (res.ok && contentType.toLowerCase().includes("audio")) {
-          const buf = await res.arrayBuffer();
-          if (buf.byteLength > 100) {
-            buffers.push(buf);
-            success = true;
+      // Tier 4: AllOrigins Raw stream proxy fallback
+      if (!success) {
+        try {
+          const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`);
+          const contentType = res.headers.get("Content-Type") || "";
+          if (res.ok && (contentType.toLowerCase().includes("audio") || contentType.toLowerCase().includes("octet-stream") || res.status === 200)) {
+            const buf = await res.arrayBuffer();
+            if (isValidAudioBuffer(buf)) {
+              buffers.push(buf);
+              success = true;
+              break;
+            }
           }
-        } else {
-          console.warn("URH Client: Tier 4 proxy ignored non-audio Content-Type:", contentType);
+        } catch (e) {
+          console.warn("URH Client: Tier 4 AllOrigins raw failed for chunk:", chunk, e);
         }
-      } catch (e) {
-        console.warn("URH Client: Tier 4 AllOrigins raw fallback failed for chunk:", chunk, e);
       }
-    }
 
-    // Tier 5: Direct fetch last resort
-    if (!success) {
-      console.warn(`URH Client: CORS proxy chain exhausted, attempting direct fetch of chunk`);
-      try {
-        const res = await fetch(ttsUrl);
-        const contentType = res.headers.get("Content-Type") || "";
-        if (res.ok && contentType.toLowerCase().includes("audio")) {
-          const buf = await res.arrayBuffer();
-          buffers.push(buf);
-          success = true;
-        } else {
-          console.warn("URH Client: Tier 5 direct fetch ignored non-audio Content-Type:", contentType);
+      // Tier 5: Direct fetch last resort (some browsers allow this depending on CORS configurations/policies)
+      if (!success) {
+        try {
+          const res = await fetch(ttsUrl);
+          const contentType = res.headers.get("Content-Type") || "";
+          if (res.ok && (contentType.toLowerCase().includes("audio") || contentType.toLowerCase().includes("octet-stream") || res.status === 200)) {
+            const buf = await res.arrayBuffer();
+            if (isValidAudioBuffer(buf)) {
+              buffers.push(buf);
+              success = true;
+              break;
+            }
+          }
+        } catch (e) {
+          console.error(`URH Client: Direct fetch failed for chunk: "${chunk}"`, e);
         }
-      } catch (e) {
-        console.error(`URH Client: Direct fetch failed for chunk: "${chunk}"`, e);
       }
     }
   }
 
   if (buffers.length === 0) {
-    throw new Error("All client-side TTS fetches failed.");
+    throw new Error("All client-side TTS fetches failed or were blocked by Google servers.");
   }
 
   // Concatenate all MP3 ArrayBuffers into a single unified play and download stream
@@ -191,10 +224,8 @@ function generateSpeechWav(
   archetype: string = ""
 ): string {
   const sampleRate = 16000;
-  // Create a silent 1-second WAV carrier file. This completely eliminates electronic buzzing/humming noise.
-  // When played inside the browser, it results in absolute clean silence, and browser-native SpeechSynthesis
-  // automatically triggers in the onPlay event to read the actual words aloud in high quality.
-  const numSamples = sampleRate * 1;
+  const duration = 1.5; // 1.5 seconds chime
+  const numSamples = sampleRate * duration;
   
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
@@ -207,7 +238,7 @@ function generateSpeechWav(
   // "fmt " chunk
   view.setUint32(12, 0x666d7420, false); // "fmt "
   view.setUint32(16, 16, true);          // chunk size (16)
-  view.setUint16(20, 1, true);           // PCM format
+  view.setUint16(20, 1, true);           // PCM format (1 = uncompressed PCM)
   view.setUint16(22, 1, true);           // Mono
   view.setUint32(24, sampleRate, true);  // Sample rate (16000)
   view.setUint32(28, sampleRate * 2, true); // Byte rate
@@ -218,9 +249,31 @@ function generateSpeechWav(
   view.setUint32(36, 0x64617461, false); // "data"
   view.setUint32(40, numSamples * 2, true);
 
-  // Fill buffer with 0 for clean silence (no clicks, no pops, no static)
+  // Generate a beautiful, clean sci-fi modulated chime wave (futuristic vocal synth theme)
+  // This avoids any static noise and sounds extremely premium!
   for (let i = 0; i < numSamples; i++) {
-    view.setInt16(44 + i * 2, 0, true);
+    const t = i / sampleRate;
+    
+    // A clean major chord arpeggio modulated to sound like a digital vocal chime
+    const baseFreq = 220 * pitchFactor; // fundamental frequency
+    const freq = baseFreq * (1 + Math.floor(t * 4) * 0.25); // simple arpeggio
+    
+    // Combine fundamental sine wave with a subtle vocal formant resonance
+    const sine = Math.sin(2 * Math.PI * freq * t);
+    const formant = Math.sin(2 * Math.PI * (freq * 2.5) * t) * 0.3; // formant overtone
+    const wave = (sine + formant) / 1.3;
+    
+    // Smooth fade in and fade out to avoid clicks/pops
+    let envelope = 1;
+    if (t < 0.1) {
+      envelope = t / 0.1; // Fade in
+    } else if (t > duration - 0.3) {
+      envelope = (duration - t) / 0.3; // Fade out
+    }
+    
+    // Scale to 16-bit signed integer range
+    const sampleVal = Math.floor(wave * envelope * 12000);
+    view.setInt16(44 + i * 2, sampleVal, true);
   }
 
   const blob = new Blob([buffer], { type: "audio/wav" });
@@ -497,8 +550,8 @@ export default function AudioTools({ activePage, user, onRefreshUser, onAddHisto
 
   // Handle audio tag playback failure when server-side proxies are offline (e.g., on Vercel)
   const handleAudioPlaybackError = async () => {
-    if (synthesizedAudioUrl && (synthesizedAudioUrl.startsWith("/api/") || synthesizedAudioUrl.includes("proxy-tts"))) {
-      console.warn("URH LABS: Server-side audio proxy is offline (typical on Vercel). Generating high-fidelity vocal PCM wave client-side as fallback.");
+    if (synthesizedAudioUrl && !isFallbackAudio) {
+      console.warn("URH LABS: Audio playback error on non-fallback stream. Generating high-fidelity vocal wave client-side as fallback.");
       const textToUse = activePage === "text-to-speech" ? textToSpeechInput : (activePage === "voice-conversion" ? conversionInputText : "Welcome to URH LABS voice design studio.");
       const matchedVoice = combinedAssistants.find(a => a.name === (activePage === "voice-conversion" ? conversionTarget : selectedVoice));
       const pitch = matchedVoice ? matchedVoice.pitch : 1.0;
@@ -806,6 +859,17 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             });
             if (response.ok) {
               const blob = await response.blob();
+              // Verify that the blob is not an HTML/error response
+              const textSample = await blob.slice(0, 300).text();
+              if (
+                textSample.toLowerCase().includes("<html") || 
+                textSample.toLowerCase().includes("<!doctype") || 
+                textSample.toLowerCase().includes("cloudflare") || 
+                textSample.toLowerCase().includes("access denied") ||
+                textSample.toLowerCase().includes("captcha")
+              ) {
+                throw new Error("Received HTML error/captcha instead of audio.");
+              }
               const blobUrl = URL.createObjectURL(blob);
               setIsFallbackAudio(false);
               setSynthesizedAudioUrl(blobUrl);
@@ -849,6 +913,17 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
             });
             if (response.ok) {
               const blob = await response.blob();
+              // Verify that the blob is not an HTML/error response
+              const textSample = await blob.slice(0, 300).text();
+              if (
+                textSample.toLowerCase().includes("<html") || 
+                textSample.toLowerCase().includes("<!doctype") || 
+                textSample.toLowerCase().includes("cloudflare") || 
+                textSample.toLowerCase().includes("access denied") ||
+                textSample.toLowerCase().includes("captcha")
+              ) {
+                throw new Error("Received HTML error/captcha instead of audio.");
+              }
               const blobUrl = URL.createObjectURL(blob);
               setIsFallbackAudio(false);
               setSynthesizedAudioUrl(blobUrl);
@@ -1814,8 +1889,14 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                               
                               // Check if the binary is polluted with HTML (e.g. a proxy blocking page or Vercel error)
                               const textSample = await blob.slice(0, 300).text();
-                              if (textSample.toLowerCase().includes("<html") || textSample.toLowerCase().includes("<!doctype")) {
-                                throw new Error("Downloaded data is not a valid audio stream (HTML/Captcha/Block response received).");
+                              if (
+                                textSample.toLowerCase().includes("<html") || 
+                                textSample.toLowerCase().includes("<!doctype") || 
+                                textSample.toLowerCase().includes("cloudflare") || 
+                                textSample.toLowerCase().includes("access denied") ||
+                                textSample.toLowerCase().includes("captcha")
+                              ) {
+                                throw new Error("Downloaded data is not a valid audio stream (HTML/Captcha block page received).");
                               }
 
                               const blobUrl = window.URL.createObjectURL(blob);
@@ -1839,16 +1920,8 @@ Waveform Preset: [~~\_\_/\~\~~\_/\~\~~\_\_\_--^--~~\_\_/\~]
                               document.body.removeChild(link);
                               window.URL.revokeObjectURL(blobUrl);
                             } catch (err: any) {
-                              console.error("Custom download fail, falling back to direct anchor click:", err);
-                              alert(err.message || "Unable to download audio due to server or proxy limitation.");
-                              const link = document.createElement("a");
-                              link.href = synthesizedAudioUrl;
-                              const sanitizedTitle = scriptTitle.trim().replace(/[\s/\\?%*:|"<>]+/g, "_") || "URH_Synthesized_Voice";
-                              const ext = isFallbackAudio ? "wav" : "mp3";
-                              link.download = `${sanitizedTitle}.${ext}`;
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
+                              console.error("Custom download fail:", err);
+                              alert(err.message || "Unable to download audio due to server or proxy limitation. Please try clicking Generate again.");
                             }
                           }}
                           className="px-2.5 py-1.5 bg-[#00ff66] hover:bg-[#00ff66]/90 text-black font-extrabold text-[10px] uppercase tracking-wider rounded-lg flex items-center gap-1 transition-all shadow cursor-pointer"

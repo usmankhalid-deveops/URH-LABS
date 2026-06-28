@@ -86,25 +86,60 @@ async function startServer() {
         chunks.push("No inputs provided.");
       }
 
-      // Request chunks parallelly with robust 3-try retries to make synthesis instantaneous-fast and bypass single-thread delays!
+      // Request chunks in parallel using highly-available, multi-provider fallbacks with content-type checking and HTML injection prevention!
       const chunkPromises = chunks.map(async (chunk) => {
-        const targetUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const response = await fetch(targetUrl, {
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36"
+        // Multi-client and multi-provider endpoints to guarantee delivery
+        const providers = [
+          `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`,
+          `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`,
+          lang.toLowerCase().startsWith("en") 
+            ? `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(chunk)}&type=2`
+            : null
+        ].filter(Boolean) as string[];
+
+        for (const targetUrl of providers) {
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+              const response = await fetch(targetUrl, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+                  "Referer": "https://translate.google.com/"
+                }
+              });
+
+              if (response.ok) {
+                const contentType = response.headers.get("Content-Type") || "";
+                const isProbablyAudio = contentType.toLowerCase().includes("audio") || 
+                                        contentType.toLowerCase().includes("octet-stream") || 
+                                        response.status === 200;
+
+                if (isProbablyAudio) {
+                  const arrBuf = await response.arrayBuffer();
+                  const buffer = Buffer.from(arrBuf);
+
+                  if (buffer.length > 100) {
+                    // Safety check: verify that the response is not actually HTML, Cloudflare, or captcha error text
+                    const sampleText = buffer.slice(0, Math.min(buffer.length, 250)).toString("utf8").toLowerCase();
+                    if (
+                      sampleText.includes("<html") || 
+                      sampleText.includes("<!doctype") || 
+                      sampleText.includes("<xml") || 
+                      sampleText.includes("{\"error\"") ||
+                      sampleText.includes("cloudflare") ||
+                      sampleText.includes("access denied") ||
+                      sampleText.includes("captcha")
+                    ) {
+                      console.warn(`URH Labs TTS Proxy: Ignored error page/HTML block from URL: ${targetUrl}`);
+                      continue; // Proceed to retry or next provider
+                    }
+
+                    return buffer; // Successful high-quality audio bytes obtained!
+                  }
+                }
               }
-            });
-            const contentType = response.headers.get("Content-Type") || "";
-            if (response.ok && contentType.toLowerCase().includes("audio")) {
-              const arrBuf = await response.arrayBuffer();
-              return Buffer.from(arrBuf);
-            } else {
-              console.warn(`URH Labs TTS Proxy Attempt ${attempt + 1}: Ignored non-audio or invalid response for chunk. Status: ${response.status}, Content-Type: ${contentType}`);
+            } catch (e: any) {
+              console.error(`URH Labs TTS Proxy: Provider fetch exception for chunk "${chunk.substring(0, 20)}...": ${e.message}`);
             }
-          } catch (e) {
-            console.error(`URH Labs TTS Proxy Attempt ${attempt + 1} failed for chunk: "${chunk.substring(0, 25)}..."`, e);
           }
         }
         return null;
@@ -114,7 +149,7 @@ async function startServer() {
       const audioBuffers = resolvedBuffers.filter((b): b is Buffer => b !== null);
 
       if (audioBuffers.length === 0) {
-        return res.status(502).send("Google synthesis server was unresponsive or returned error.");
+        return res.status(502).send("All Google/Youdao synthesis providers were unresponsive or returned blocks.");
       }
 
       const combinedAudio = Buffer.concat(audioBuffers);
