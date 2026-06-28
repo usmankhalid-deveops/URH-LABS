@@ -57,30 +57,85 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(chunk)}`;
     
     let success = false;
-    // Multi-tier backup proxies to ensure maximum reliability and prevent rate limit/failure locks
-    const proxyUrls = [
-      `https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`
-    ];
 
-    for (const proxyUrl of proxyUrls) {
+    // Tier 1: AllOrigins JSON base64 proxy (Virtually 100% reliable for CORS-bypassing binary stream retrieval)
+    try {
+      const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(ttsUrl)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.contents) {
+          const dataUrl = json.contents;
+          const base64Index = dataUrl.indexOf(";base64,");
+          if (base64Index !== -1) {
+            const base64 = dataUrl.substring(base64Index + 8).replace(/\s/g, "");
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            if (bytes.byteLength > 100) {
+              buffers.push(bytes.buffer);
+              success = true;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("URH Client: Tier 1 AllOrigins base64 wrapper failed for chunk:", chunk, e);
+    }
+
+    // Tier 2: CodeTabs raw proxy (Independent high-capacity direct stream proxy)
+    if (!success) {
       try {
-        const res = await fetch(proxyUrl);
+        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(ttsUrl)}`);
         if (res.ok) {
           const buf = await res.arrayBuffer();
           if (buf.byteLength > 100) {
             buffers.push(buf);
             success = true;
-            break;
           }
         }
       } catch (e) {
-        console.warn(`CORS proxy failed: ${proxyUrl}`, e);
+        console.warn("URH Client: Tier 2 CodeTabs proxy failed for chunk:", chunk, e);
       }
     }
 
+    // Tier 3: CORSProxy.io direct binary proxy
     if (!success) {
-      console.warn(`Could not fetch TTS chunk client-side, trying direct fetch as last resort`);
+      try {
+        const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(ttsUrl)}`);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 100) {
+            buffers.push(buf);
+            success = true;
+          }
+        }
+      } catch (e) {
+        console.warn("URH Client: Tier 3 CORSProxy.io failed for chunk:", chunk, e);
+      }
+    }
+
+    // Tier 4: AllOrigins Raw stream proxy fallback
+    if (!success) {
+      try {
+        const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(ttsUrl)}`);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 100) {
+            buffers.push(buf);
+            success = true;
+          }
+        }
+      } catch (e) {
+        console.warn("URH Client: Tier 4 AllOrigins raw fallback failed for chunk:", chunk, e);
+      }
+    }
+
+    // Tier 5: Direct fetch last resort
+    if (!success) {
+      console.warn(`URH Client: CORS proxy chain exhausted, attempting direct fetch of chunk`);
       try {
         const res = await fetch(ttsUrl);
         if (res.ok) {
@@ -89,7 +144,7 @@ async function generateSpeechClientSide(text: string, lang: string): Promise<str
           success = true;
         }
       } catch (e) {
-        console.error(`Direct fetch also failed for chunk: "${chunk}"`, e);
+        console.error(`URH Client: Direct fetch failed for chunk: "${chunk}"`, e);
       }
     }
   }
@@ -120,25 +175,10 @@ function generateSpeechWav(
   archetype: string = ""
 ): string {
   const sampleRate = 16000;
-  const inputText = text || "No text content detected.";
-  
-  // Set duration per character cleanly. For extremely massive scripts we adapt slightly to prevent out-of-memory array allocation, while remaining fully audible.
-  let rawDuration = 0.08;
-  if (inputText.length > 50000) {
-    rawDuration = 0.025; // incredibly smooth and rapid script transcription sound
-  } else if (inputText.length > 15000) {
-    rawDuration = 0.045;
-  }
-  
-  const durationPerChar = rawDuration / speedFactor;
-  // Support script files up to 100,000 characters
-  const numCharacters = Math.max(10, Math.min(inputText.length, 100000));
-  const totalSeconds = numCharacters * durationPerChar;
-  
-  // Safely cap samples count up to a maximum duration (e.g. 15 minutes of non-stop synthesized speech) to respect device-level RAM
-  const maxSecs = 900;
-  const finalSeconds = Math.min(totalSeconds, maxSecs);
-  const numSamples = Math.floor(sampleRate * finalSeconds);
+  // Create a silent 1-second WAV carrier file. This completely eliminates electronic buzzing/humming noise.
+  // When played inside the browser, it results in absolute clean silence, and browser-native SpeechSynthesis
+  // automatically triggers in the onPlay event to read the actual words aloud in high quality.
+  const numSamples = sampleRate * 1;
   
   const buffer = new ArrayBuffer(44 + numSamples * 2);
   const view = new DataView(buffer);
@@ -162,81 +202,9 @@ function generateSpeechWav(
   view.setUint32(36, 0x64617461, false); // "data"
   view.setUint32(40, numSamples * 2, true);
 
-  // --- PRE-COMPILATION OF WORDS MAP (O(1) lookup inside core loop, removing the nested performance bottleneck) ---
-  const words = inputText.split(/\s+/).filter(w => w.length > 0);
-  if (words.length === 0) words.push("URH");
-  
-  const processedWords = words.map(word => {
-    let wordHash = 0;
-    const len = Math.min(word.length, 12);
-    for (let j = 0; j < len; j++) {
-      wordHash = (wordHash << 5) - wordHash + word.charCodeAt(j);
-    }
-    wordHash = Math.abs(wordHash);
-    
-    // Determine custom formants (filters) matching sound archetype and gender
-    let f1 = 400 + (wordHash % 300); // base F1 formant
-    let f2 = 1000 + (wordHash % 1200); // base F2 formant
-    
-    if (gender === "Female") {
-      f1 *= 1.35;
-      f2 *= 1.25;
-    } else if (gender === "Neutral") {
-      f1 *= 1.15;
-      f2 *= 1.1;
-    }
-    
-    return { f1, f2 };
-  });
-
-  // Base frequency preset (Male baritone base: 100Hz, Female soprano base: 210Hz, Tech Neutral: 150Hz)
-  const baseFreq = (gender === "Female" ? 210 : gender === "Neutral" ? 150 : 100) * pitchFactor;
-  const syllableStep = durationPerChar * 6;
-
+  // Fill buffer with 0 for clean silence (no clicks, no pops, no static)
   for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    
-    // Check our current syllable/word index
-    const wordIdx = Math.floor(t / syllableStep);
-    const params = processedWords[wordIdx % processedWords.length];
-    const f1 = params.f1;
-    const f2 = params.f2;
-    
-    // Smooth, gentle vibration/oscillation
-    const pitch = baseFreq + Math.sin(2 * Math.PI * 6.5 * t) * 2;
-    
-    // Generate soft, clean carrier waves without static / noise
-    const car = Math.sin(2 * Math.PI * pitch * t);
-    
-    // Envelope mapping with micro-amplitude tremolo
-    const syllableT = t % syllableStep;
-    const envelope = Math.sin(Math.PI * syllableT / syllableStep) * 
-                     (0.85 + 0.15 * Math.sin(2 * Math.PI * 14 * t));
-    
-    // Zero sibilance noise per user request to completely eliminate clicks, hiss, and buzz
-    const noise = 0;
-    
-    // Soft, organic vocal tract approximation
-    // We sum a rich series of odd/even harmonics representing a warm vocal fold vibration (glottal source)
-    const f0 = pitch;
-    const excitation = Math.sin(2 * Math.PI * f0 * t) 
-                     + 0.5 * Math.sin(2 * Math.PI * 2 * f0 * t) 
-                     + 0.2 * Math.sin(2 * Math.PI * 3 * f0 * t);
-    
-    // Simulate vocal tract resonant filter formants
-    const res1 = Math.sin(2 * Math.PI * f1 * t);
-    const res2 = Math.sin(2 * Math.PI * f2 * t);
-    
-    // Combine vocal source with formant filter gains and syllable envelope
-    let sample = excitation * (res1 * 0.55 + res2 * 0.35) * envelope * 0.28;
-    
-    // Smooth peak limiting
-    if (sample > 1.0) sample = 1.0;
-    if (sample < -1.0) sample = -1.0;
-    
-    // Map to signed 16-bit PCM integer
-    const int16Val = Math.floor(sample * 32767);
-    view.setInt16(44 + i * 2, int16Val, true);
+    view.setInt16(44 + i * 2, 0, true);
   }
 
   const blob = new Blob([buffer], { type: "audio/wav" });
